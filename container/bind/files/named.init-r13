@@ -1,0 +1,516 @@
+#!/sbin/openrc-run
+# Copyright 1999-2014 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${NAMED_CONF:=/etc/bind/${RC_SVCNAME}.conf}
+: ${NAMED_PIDFILE:=${PIDFILE:-$( grep pid-file "${NAMED_CONF}" | cut -d'"' -f 2 )}}
+: ${NAMED_NICELEVEL:=0}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+PN='bind' # PN="${RC_SVCNAME:=named}"
+PV='@PVR@'
+CATEGORY='net-dns'
+dockeropts=(
+	#--log-level debug
+	--cap-drop ALL
+	--cap-add NET_BIND_SERVICE
+	--cap-add SETUID
+	--cap-add SETGID
+	--interactive
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+
+	# Allow access to DHCP hosts list for DNS auto-generation ...
+	--mount type=bind,source=/etc/dhcp,destination=/etc/dhcp,ro=true
+
+	--mount type=bind,source=/etc/${PN},destination=/etc/${PN},ro=true
+	--mount type=bind,source=/var/${PN},destination=/var/${PN}
+	--mount type=bind,source=/var/log/named,destination=/var/log/named
+	--mount type=bind,source=/var/run/named,destination=/var/run/named
+
+	# debug
+	#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.sh.service,destination=/usr/libexec/entrypoint.sh
+	#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.d/named,destination=/usr/libexec/entrypoint.d/named
+
+	--name "openrc-${PN}-${PV}"
+
+	--network host
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	#--publish 53:53/udp
+	#--publish 53:53/tcp
+	#--publish 127.0.0.1:953:953/tcp
+	#--publish 127.0.0.1:8053:8053/tcp
+
+	--restart on-failure
+	#--rm
+	--tty
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised named"
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} -u named ${CPU:+-n ${CPU} }${OPTIONS} -f" # -g -d 9
+command_background="true"
+#command_user="named:named"
+start_stop_daemon_args="--wait 1000 --nicelevel ${NAMED_NICELEVEL:-0} --stdout /var/log/named/${command}-${PN}.log --stderr /var/log/named/${command}-${PN}.log"
+pidfile="/var/run/containers/${RC_SVCNAME}.pid"
+
+extra_commands="checkconfig checkzones regenerateconfig"
+extra_started_commands="sync reload freeze unfreeze"
+extra_stopped_commands="inspect"
+description_checkconfig="Validate the service's configuration"
+description_checkzones="Validate the service's zone configurations"
+description_regenerateconfig="Regenerate the service's PTR mappings"
+description_sync="Sync and clear journal files"
+description_reload="Reload the service's configuration"
+description_freeze="Commit journaled changes to zone-files and prevent further updates"
+description_unfreeze="Unlock zone-files and allow dynamic updates"
+description_inspect="Launch container interactively"
+description="Berkeley Internet Name Domain - Name Server"
+
+depend() {
+	need containers
+	use logger
+	provide dns
+}
+
+_checkpaths() {
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0750 --owner named:named --quiet "$( dirname ${NAMED_PIDFILE} )" || return 1
+	else
+		checkpath --directory-truncate --mode 0750 --owner named:named --quiet "$( dirname ${NAMED_PIDFILE} )" || return 1
+	fi
+	checkpath --directory --mode 0775 --owner root:named --quiet "/var/log/named" || return 1
+	checkpath --directory --mode 0770 --owner root:named --quiet "/var/bind" || return 1
+}
+
+_get_pidfile() {
+	# as suggested in bug #107724, bug 335398#c17
+	[ -n "${NAMED_PIDFILE}" ] || NAMED_PIDFILE="$(
+		if service_started; then
+			docker exec "openrc-${PN}-${PV}" \
+				named-checkconf -p "${NAMED_CONF}" |
+			grep 'pid-file' | cut -d'"' -f2
+		else
+			docker run "${dockeropts[@]}" \
+					--cap-drop ALL \
+					--network none \
+					--name "openrc-${PN}-${PV}-getpid" \
+					--replace \
+					--restart no \
+					--rm \
+					--entrypoint=/usr/sbin/named-checkconf \
+				"${dockerimage}" -p "${NAMED_CONF}" |
+			grep 'pid-file' | cut -d'"' -f2
+		fi
+	)"
+	[ -z "${NAMED_PIDFILE}" ] && NAMED_PIDFILE="/var/run/named/named.pid"
+} # _get_pidfile
+
+checkconfig() {
+	local -i rc=0
+
+	ebegin "Checking named configuration"
+
+	if [ ! -f "${NAMED_CONF}" ] ; then
+		eerror "No ${NAMED_CONF} file exists!"
+		return 1
+	fi
+
+	_checkpaths || return 1
+
+	if service_started; then
+		docker exec "openrc-${PN}-${PV}" \
+			named-checkconf "${NAMED_CONF}" || rc=${?}
+	else
+		docker run "${dockeropts[@]}" \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${PN}-${PV}-checkconf" \
+				--replace \
+				--restart no \
+				--rm \
+				--entrypoint=/usr/sbin/named-checkconf \
+			${dockerimage} "${NAMED_CONF}" || rc=${?}
+	fi
+	if [ $(( rc )) -ne 0 ]; then
+		eerror "named-checkconf failed! Please fix your config first."
+		return 1
+	fi
+
+	eend 0
+	return 0
+} # checkconfig
+
+checkzones() {
+	local -i rc=0
+
+	_checkpaths || return 1
+
+	ebegin "Checking named configuration and zones"
+	if service_started; then
+		docker exec "openrc-${PN}-${PV}" \
+			named-checkconf -z -j "${NAMED_CONF}" || rc=${?}
+	else
+		docker run "${dockeropts[@]}" \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${PN}-${PV}-checkzones" \
+				--replace \
+				--restart no \
+				--rm \
+				--entrypoint=/usr/sbin/named-checkconf \
+			"${dockerimage}" -z -j "${NAMED_CONF}" || rc=${?}
+	fi
+
+	eend ${rc}
+} # checkzones
+
+backupconfig() {
+	local action="${1}"
+	local -i rc=0
+
+	type -pf git >/dev/null 2>&1 || return 1
+
+	pushd >/dev/null /var/bind/pri || return 1
+
+	[ -d "$( git rev-parse --show-toplevel )" ] || return 1
+
+	ebegin "Backing up internal zones"
+
+	git config user.name "OpenRC-$( basename "$( ls -d /var/db/pkg/sys-apps/openrc* )" | cut -d'-' -f 2- )"
+	git config user.email "openrc@$( hostname -f 2>/dev/null || echo 'localhost' )"
+	{
+		if git add *.zone */*.zone &&
+			git status --porcelain | grep -q '^M .*\.zone'
+		then
+			git commit -m "Service ${RC_SVCNAME} ${action}" || rc=${?}
+		fi
+	} >/dev/null
+
+	eend ${rc} "Backup process failed: ${rc}"
+
+	popd >/dev/null
+} # backupconfig
+
+# Moved to entrypoint.d/named as tools required by generate-ptr.sh are only
+# available within the 'named' container ...
+#
+regenerateconfig() {
+#	local -i rc=0
+#
+#	if [ -x /var/bind/pri/internal/generate-ptr.sh ]; then
+#		pushd >/dev/null /var/bind/pri/internal || return 1
+#
+#		ebegin "Regenerating reverse mappings for internal zones"
+#
+#		mkdir -p /var/bind/pri/internal/backup
+#		/var/bind/pri/internal/generate-ptr.sh >/dev/null || rc=${?}
+#
+#		mv *-202???????.zone /var/bind/pri/internal/backup/ 2>/dev/null
+#
+#		eend ${rc} "Reverse map generation failed: ${rc}"
+#
+#		popd >/dev/null
+#	else
+#		ewarn "Not regenerating internal zones"
+#	fi
+
+	if service_started; then
+		docker exec "openrc-${PN}-${PV}" \
+			sh /usr/libexec/entrypoint.d/named
+	else
+		docker run "${dockeropts[@]}" \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${PN}-${PV}-regenerateconfig" \
+				--replace \
+				--restart no \
+				--rm \
+				--entrypoint=/bin/sh \
+			${dockerimage} /usr/libexec/entrypoint.d/named
+	fi
+} # regenerateconfig
+
+freeze() {
+	#ebegin "Freezing zones"
+	#docker exec "openrc-${PN}-${PV}" rndc freeze
+	#eend ${?}
+
+	local view='' zone=''
+	local -i rc=0
+
+	for view in 'internal'; do
+		if ! [ -d "/var/bind/pri/${view}" ]; then
+			eerror "Data for view '${view}' not found in '/var/bind/pri/${view}'"
+			return 1
+		fi
+		for zone in $(
+			docker exec "openrc-${PN}-${PV}" named-checkconf -l |
+			grep "${view} master" |
+			awk '{ print $1 }' |
+			grep -ve '^0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa$' -e '^127.in-addr.arpa$' -e '^localhost$' |
+			sort -V
+		); do
+			ebegin "Freezing zone '${zone}'"
+			docker exec "openrc-${PN}-${PV}" rndc freeze "${zone}" IN "${view}" || { rc=${?} ; false ; }
+			eend ${?}
+		done
+	done
+
+	return ${rc}
+} # freeze
+
+unfreeze() {
+	#ebegin "Unfreezing zones"
+	#docker exec "openrc-${PN}-${PV}" rndc unfreeze
+	#eend ${?}
+
+	local view='' zone=''
+	local -i rc=0
+
+	for view in 'internal'; do
+		if ! [ -d "/var/bind/pri/${view}" ]; then
+			eerror "Data for view '${view}' not found in '/var/bind/pri/${view}'"
+			return 1
+		fi
+		for zone in $(
+			docker exec "openrc-${PN}-${PV}" named-checkconf -l |
+			grep "${view} master" |
+			awk '{ print $1 }' |
+			grep -ve '^0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa$' -e '^127.in-addr.arpa$' -e '^localhost$' |
+			sort -V
+		); do
+			ebegin "Unfreezing zone '${zone}'"
+			docker exec "openrc-${PN}-${PV}" rndc unfreeze "${zone}" IN "${view}" || { rc=${?} ; false ; }
+			eend ${?}
+		done
+	done
+
+	return ${rc}
+} # unfreeze
+
+sync() {
+	ebegin "Synchronising all zones"
+	docker exec "openrc-${PN}-${PV}" rndc sync -clean
+	eend $?
+} # sync
+
+inspect() {
+	_checkpaths || return 1
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	docker --log-level=info run --interactive "${dockeropts[@]}" \
+			--name "openrc-${PN}-${PV}-inspect" \
+			--replace \
+			--restart no \
+			--rm \
+			--entrypoint=/bin/sh \
+		"${dockerimage}"
+}
+
+start_pre() {
+	local git='' dir=''
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	checkconfig || { eend 1; return 1; }
+
+	#regenerateconfig
+	#backupconfig "starting"
+
+	if [ -n "${NAMED_USE_GIT:-}" ] && [ "${NAMED_USE_GIT}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+	if [ -n "${git:-}" ]; then
+		for dir in /etc/bind /var/bind; do
+			if [ -d "${dir}"/.git ]; then
+				if ! [ -s "${dir}"/.gitignore ]; then
+					cat >> "${dir}"/.gitignore <<-EOF
+						**/._cfg[0-9][0-9][0-9][0-9]_*
+						**/.keep*
+						**/.*.swp
+
+						**/*.cache
+						**/*.jbk
+						**/*.jnl
+						**/*.key
+						**/*.mkeys
+						**/*.private
+						**/*.signed
+						**/*.state
+						**/backup/
+					EOF
+				fi
+				pushd "${dir}"/ >/dev/null 2>&1 &&
+					git status 2>/dev/null | grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+					einfo "Committing configuration changes from '${dir}' to git" &&
+					git add --all . >/dev/null 2>&1 &&
+					git status | tail -n +4 &&
+					git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+				popd >/dev/null 2>&1
+			fi
+		done
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${NAMED_PIDFILE}" ] && rm "${NAMED_PIDFILE}" || :
+}
+
+start_post() {
+	local -i wait=20 count=0 oldpid=0 pid=0 expect_pid=1 have_pid=0
+	local sleep='1' pid_file="${NAMED_PIDFILE}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			#status="$( docker inspect --format '{{.State.Running}}' "openrc-${PN}-${PV}" 2>/dev/null )"
+			#case "${status:-}" in
+			#	false)	break ;;
+			#	true)	: ;;
+			#	'')
+			#		# Not yet started?
+			#		vewarn "No container state:\n$( docker inspect --format '{{.State}}' "openrc-${PN}-${PV}" )"
+			#		;;
+			#	*)
+			#		vewarn "Unknown container 'Running' state '${status}'"
+			#		;;
+			#esac
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+sync() {
+	local -i rc=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || { eend 1; return 1; }
+
+	ebegin "Clearing journal files"
+
+	docker exec "openrc-${PN}-${PV}" rndc sync -clear
+
+	eend ${rc}
+}
+
+reload() {
+	local -i rc=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || { eend 1; return 1; }
+
+	#regenerateconfig
+	#backupconfig "reloading"
+
+	ebegin "Reloading named.conf and zone files"
+
+	#_get_pidfile
+	#if [ -s "${NAMED_PIDFILE}" ]; then
+	#	: $(( pid = $( cat "${NAMED_PIDFILE}" ) ))
+
+	#	if [ $(( pid )) -gt 1 ]; then
+	#		kill -HUP ${pid}
+	#	fi
+	#	rc=${?}
+	#else
+	#	ewarn "Unable to determine the pidfile... this is"
+	#	ewarn "a fallback mode. Please check your installation!"
+
+	#	${RC_SERVICE} restart || rc=${?}
+	#fi
+
+	docker exec "openrc-${PN}-${PV}" rndc reload
+
+	eend ${rc}
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "${NAMED_PIDFILE}" ] && rm "${NAMED_PIDFILE}" || :
+	fi
+}

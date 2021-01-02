@@ -1,0 +1,6 @@
+# /etc/conf.d/zxtm: config for /etc/init.d/zxtm
+
+ZEUSHOME="/opt/zxtm"
+
+# Optional directory to chroot() to before starting ZXTM
+#ZXTM_CHROOT=""

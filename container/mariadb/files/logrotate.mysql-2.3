@@ -1,0 +1,20 @@
+# Copyright 1999-2019 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+/var/log/mysql/mysql.err /var/log/mysql/mysql.log /var/log/mysql/mysqld.err /var/log/mysql/mysqld.log {
+	su mysql mysql
+	weekly
+	create 660 mysql mysql
+	notifempty
+	size 5M
+	missingok
+	sharedscripts
+	postrotate
+		pidfile="$( my_print_defaults server mysqld mariadb | grep 'pid[_-]file' | tail -n 1 | cut -d = -f 2 )"
+		if [ -s "${pidfile}" ] ; then
+			/bin/kill -HUP "$( cat "${pidfile}" )"
+		fi
+	endscript
+}
+
+# vi: set sw=4 ts=4:

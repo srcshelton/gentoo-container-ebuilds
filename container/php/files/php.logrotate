@@ -1,0 +1,25 @@
+# php logrotate script
+
+/var/log/php/php7*.error.log {
+	su nobody nobody
+	daily
+	missingok
+	nocreate
+	copytruncate
+	rotate 7
+	compress
+	notifempty
+	dateext
+}
+
+/var/log/php/php7*.access.log {
+	su root root
+	daily
+	missingok
+	nocreate
+	copytruncate
+	rotate 7
+	compress
+	notifempty
+	dateext
+}

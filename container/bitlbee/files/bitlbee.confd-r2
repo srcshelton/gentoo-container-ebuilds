@@ -1,0 +1,10 @@
+# Check changes into a (pre-existing) git repo in /etc/bitlbee?
+#BITLBEE_USE_GIT=0
+
+# Bitlbee options (see /usr/sbin/bitlbee -h)
+BITLBEE_OPTS=""
+
+# Specify the network services that correspond to "DaemonInterface" and
+# "ClientInterface" settings in bitlbee.conf. For example, if bound to 0.0.0.0,
+# this should be set to "net.lo" which provides the loopback interface.
+rc_need="net.lo"

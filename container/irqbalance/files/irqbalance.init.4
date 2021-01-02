@@ -1,0 +1,152 @@
+#!/sbin/openrc-run
+# Copyright 1999-2017 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License, v2 or later
+
+: ${IRQBALANCE_PIDFILE:=/var/run/${RC_SVCNAME}/${RC_SVCNAME}.pid}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+PN="${RC_SVCNAME:=irqbalance}" # PN='irqbalance'
+PV='@PVR@'
+CATEGORY='sys-apps'
+dockeropts=(
+	#--log-level debug
+	--cap-drop ALL
+	#--init
+	#--interactive
+	--mount type=bind,source=/var/run/${PN},destination=/var/run/${PN}
+	--name "openrc-${PN}-${PV}"
+
+	--network none
+
+	--restart on-failure
+	#--rm
+	# TTY needed for correctly buffered output...
+	--tty
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised ${PN}"
+command_args="--log-level=debug run ${dockeropts[@]} ${dockerimage} --foreground --pid=${IRQBALANCE_PIDFILE} ${IRQBALANCE_OPTS}" # --debug
+command_background="true"
+#command_user='root:root'
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+pidfile="/var/run/containers/${RC_SVCNAME}.pid"
+
+description="Distribute hardware interrupts across processors on a multiprocessor system"
+
+depend() {
+	after bootmisc
+	need containers
+}
+
+start_pre() {
+	if grep -q MSI /proc/interrupts 2>/dev/null && \
+	test -z "$(find /sys/devices -type d -name msi_irqs 2>/dev/null)"; then
+		eerror "MSI interrupts found in /proc/interrupts but none found in sysfs."
+		eerror "You need to update your kernel."
+		return 1
+	fi
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${IRQBALANCE_PIDFILE}" )" || return 1
+	else
+		checkpath --directory-truncate --mode 0755 --owner root:root --quiet "$( dirname "${IRQBALANCE_PIDFILE}" )" || return 1
+	fi
+	checkpath --directory --mode 0755 --owner root:root --quiet "/var/log/${PN}" || return 1
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${IRQBALANCE_PIDFILE}" ] && rm "${IRQBALANCE_PIDFILE}" || :
+}
+
+start_post() {
+	local -i wait=5 count=0 oldpid=0 pid=0 expect_pid=0 have_pid=0
+	local sleep='1' pid_file="${IRQBALANCE_PIDFILE}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "${IRQBALANCE_PIDFILE}" ] && rm "${IRQBALANCE_PIDFILE}" || :
+	fi
+}

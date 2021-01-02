@@ -1,0 +1,18 @@
+# Copyright 1999-2019 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+/var/log/dovecot/deliver.log /var/log/dovecot/debug.log {
+	su dovecot mail
+	#delaycompress
+	rotate 5
+	missingok
+	notifempty
+	dateext
+	#size 10M
+	sharedscripts
+	postrotate
+		/etc/init.d/syslog-ng reload > /dev/null 2>&1 || true
+	endscript
+}
+
+# vi: set sw=4 ts=4:

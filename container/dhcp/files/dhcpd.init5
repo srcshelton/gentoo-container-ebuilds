@@ -1,0 +1,271 @@
+#!/sbin/openrc-run
+# Copyright 1999-2015 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+get_var() {
+	local var
+	var="$( sed -n 's/^[[:blank:]]\?'"$1"' "*\([^#";]\+\).*/\1/p' "${DHCPD_CONF}" )"
+	printf '%s' "${var:-${2}}"
+}
+
+: ${DHCPD_CONF:=/etc/dhcp/${RC_SVCNAME}.conf}
+
+# Work out our cffile if it's in our DHCPD_OPTS
+case " ${DHCPD_OPTS} " in
+	*" -cf "*)
+		DHCPD_CONF=" ${DHCPD_OPTS} "
+		DHCPD_CONF="${DHCPD_CONF##* -cf }"
+		DHCPD_CONF="${DHCPD_CONF%% *}"
+		;;
+	*)	DHCPD_OPTS="${DHCPD_OPTS} -cf ${DHCPD_CONF}"
+		;;
+esac
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+PN='dhcp' # PN="${RC_SVCNAME:=dhcp}"
+PNV="$( echo "${RC_SVCNAME}" | sed 's/dhcpd/dhcp/' )"
+PV='@PVR@'
+CATEGORY='net-misc'
+dockeropts=(
+	#--log-level debug
+	--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add NET_ADMIN
+	--cap-add NET_BIND_SERVICE
+	--cap-add NET_BROADCAST
+	--cap-add NET_RAW
+	--cap-add SETGID
+	--cap-add SETUID
+	--init
+	--interactive
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+	--mount type=bind,source=/etc/${PN},destination=/etc/${PN},ro=true
+	--mount type=bind,source=/var/lib/${PN},destination=/var/lib/${PN}
+	--mount type=bind,source=/var/log/${PN},destination=/var/log/${PN}
+	--mount type=bind,source=/var/run/${PN},destination=/var/run/${PN}
+	--name "openrc-${PNV}-${PV}"
+
+	--network host
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	#--publish 67:67/udp
+	#--publish 647:647/udp
+	#--publish 647:647/tcp
+	#--publish 847:847/udp
+	#--publish 847:847/tcp
+	#--publish 7911:7911/udp
+	#--publish 7911:7911/tcp
+
+	--restart on-failure
+	#--rm
+	--tty
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised ${RC_SVCNAME}"
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} ${DHCPD_OPTS} -q -f -pf \"$( get_var 'pid-file-name' "/var/run/dhcp/${RC_SVCNAME}.pid" )\" -lf \"$( get_var 'lease-file-name' "/var/lib/dhcp/${RC_SVCNAME}.leases" )\" -user dhcp -group dhcp${DHCPD_IFACE:+ ${DHCPD_IFACE}}"
+command_background="true"
+#command_user="dhcp:dhcp"
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${PNV}.log --stderr /var/log/${PN}/${command}-${PNV}.log"
+retry="TERM/2/KILL/5"
+pidfile="/var/run/containers/${RC_SVCNAME}.pid"
+
+extra_commands="checkconfig"
+description_checkconfig='Validate the configuration file that will be used by "start"'
+description="ISC Dynamic Host Configuration Protocol (DHCP) client/server"
+
+required_files="${DHCPD_CONF}"
+
+depend() {
+	need containers
+	use dns logger #@slapd@
+}
+
+_checkconfig() {
+	local rc
+	declare -i rc=0
+
+	set -- ${DHCPD_OPTS} -t
+
+	if service_started; then
+		docker exec "openrc-${PNV}-${PV}" \
+			dhcpd "${@}" >/dev/null 2>&1 || rc=${?}
+	else
+		docker run "${dockeropts[@]}" \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${PNV}-${PV}-checkconfig" \
+				--replace \
+				--restart no \
+				--rm \
+			"${dockerimage}" "${@}" >/dev/null 2>&1 || rc=${?}
+	fi
+	if [ $(( rc )) -ne 0 ] ; then
+		if service_started; then
+			docker exec "openrc-${PNV}-${PV}" \
+				dhcpd "${@}"
+		else
+			eerror "${RC_SVCNAME} has detected a syntax error in your configuration files:"
+			docker run "${dockeropts[@]}" \
+					--cap-drop ALL \
+					--network none \
+					--name "openrc-${PNV}-${PV}-checkconfig" \
+					--replace \
+					--restart no \
+					--rm \
+				"${dockerimage}" "${@}"
+		fi
+	fi
+
+	return ${rc}
+}
+
+checkconfig() {
+	ebegin "Checking ${RC_SVCNAME} configuration"
+	_checkconfig
+	eend ${?}
+}
+
+start_pre() {
+	local git=""
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0755 --owner dhcp:dhcp --quiet /var/run/dhcp || return 1
+	else
+		checkpath --directory-truncate --mode 0755 --owner dhcp:dhcp --quiet /var/run/dhcp || return 1
+	fi
+	checkpath --directory --mode 0755 --owner dhcp:dhcp --quiet /var/lib/dhcp /var/log/dhcp || return 1
+
+	_checkconfig || return 1
+
+	if [ -n "${DHCPD_USE_GIT:-}" ] && [ "${DHCPD_USE_GIT}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+	if [ -d /etc/dhcp/.git ] && [ -n "${git:-}" ]; then
+		if ! [ -s /etc/dhcp/.gitignore ]; then
+			cat >>/etc/dhcp/.gitignore <<-EOF
+				**/._cfg[0-9][0-9][0-9][0-9]_*
+				**/.keep*
+				**/.*.swp
+
+				*.leases
+				*.leases~
+				*.pid
+				*.sample
+			EOF
+		fi
+		pushd /etc/dhcp >/dev/null 2>&1 &&
+			git status 2>/dev/null | grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+			einfo "Committing configuration changes to git" &&
+			git add --all . >/dev/null 2>&1 &&
+			git status | tail -n +4 &&
+			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+		popd >/dev/null 2>&1
+	fi
+
+	local leasefile
+	leasefile="$( get_var 'lease-file-name' "/var/lib/dhcp/${RC_SVCNAME}.leases" )"
+	checkpath --file --owner dhcp:dhcp "${leasefile}" || return 1
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PNV}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	local DHCPD_PID
+	DHCPD_PID="$( get_var 'pid-file-name' "/var/run/dhcp/${RC_SVCNAME}.pid" )"
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${DHCPD_PID:-}" ] && rm "${DHCPD_PID}" || :
+}
+
+start_post() {
+	local DHCPD_PID
+	DHCPD_PID="$( get_var 'pid-file-name' "/var/run/dhcp/${RC_SVCNAME}.pid" )"
+	local -i wait=5 count=0 oldpid=0 pid=0 expect_pid=1 have_pid=0
+	local sleep='1' pid_file="${DHCPD_PID:-}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PNV}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PNV}' from container 'openrc-${PNV}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PNV} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PNV} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PNV}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PNV}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		local DHCPD_PID
+		DHCPD_PID="$( get_var 'pid-file-name' "/var/run/dhcp/${RC_SVCNAME}.pid" )"
+		[ -e "${DHCPD_PID:-}" ] && rm "${DHCPD_PID}" || :
+	fi
+}

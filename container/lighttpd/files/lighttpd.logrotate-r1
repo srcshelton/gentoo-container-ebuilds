@@ -1,0 +1,25 @@
+# lighttpd logrotate script for Gentoo
+
+/var/log/lighttpd/access.log /var/log/lighttpd/error.log {
+	su lighttpd lighttpd
+	daily
+	missingok
+	nocreate
+	copytruncate
+	rotate 7
+	compress
+	notifempty
+	sharedscripts
+	dateext
+	postrotate
+		if [ -x /etc/init.d/lighttpd ]; then
+			if /etc/init.d/lighttpd --quiet status; then
+				/etc/init.d/lighttpd --quiet reload || true
+			fi
+		else
+			true
+		fi
+	endscript
+}
+
+# vi: set sw=4 ts=4:

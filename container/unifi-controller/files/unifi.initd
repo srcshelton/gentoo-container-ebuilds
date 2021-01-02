@@ -1,0 +1,391 @@
+#!/sbin/openrc-run
+# Copyright 1999-2019 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+DIR="${UNIFI_DIR:-%INST_DIR%}"
+class="com.ubnt.ace.Launcher"
+jar="${DIR}/lib/ace.jar"
+
+: ${MONGOHOST:=localhost}
+: ${MONGOPORT:=27117}
+: ${MONGOLOCK:=${DIR}/db/mongod.lock}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' -o "${2:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+PN='unifi' # PN="${RC_SVCNAME:=unifi}"
+PV='@PVR@'
+CATEGORY='net-misc'
+dockeropts=(
+	#--log-level debug
+
+	--cap-drop ALL
+	--cap-add NET_RAW
+
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+
+	--mount type=bind,source=/etc/ssl/,destination=/etc/ssl/
+
+	--mount type=bind,source=/var/lib/${PN}/,destination=/var/lib/${PN}/
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/log/${PN}/
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/lib/${PN}/logs/
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/lib/${PN}/data/webrtc/logs/
+	--mount type=bind,source=/var/run/${PN}/,destination=/var/run/${PN}/
+
+	--network host
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	# TODO: Check whether system.properties has changed these defaults...
+	#--publish 8080:8080/tcp  # Device inform
+	#--publish 8443:8443/tcp  # Controller UI/API
+	#--publish 8880:8880/tcp  # Portal redirect for HTTP
+	#--publish 8843:8843/tcp  # Portal redirect for HTTPS
+	#--publish 8881:8881/tcp  # Device redirector
+	#--publish 8881:8882/tcp  # Device redirector (wired)
+	#--publish 6789:6789/tcp  # Throughput measurement
+	#--publish 3478:3478/udp  # STUN
+	#--publish 127.0.0.1:${MONGOPORT}:${MONGOPORT}/tcp
+
+	#--hostname "$( hostname -s )"
+	--interactive
+	--name "openrc-${PN}-${PV}"
+	--restart on-failure
+	#--rm
+	--tty
+	#--workdir '/'
+)
+dockerimage="service.${CATEGORY}.unifi-controller-bin:${PV}"
+
+# User-defined options...
+#
+# Java options...
+JVM_OPTS=(
+	${JAVA_OPTS:-}
+	-Djava.awt.headless=true
+	-Dfile.encoding=UTF-8
+	#-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts
+	${JAVA_ENTROPY_GATHER_DEVICE:+-Djava.security.egd="${JAVA_ENTROPY_GATHER_DEVICE}"}
+	${JVM_MAX_HEAP_SIZE:+-Xmx${JVM_MAX_HEAP_SIZE}}
+	${JVM_INIT_HEAP_SIZE:+-Xms${JVM_INIT_HEAP_SIZE}}
+)
+# Application options...
+UNIFI_OPTS=(
+	-Dunifi.datadir="/var/lib/unifi" # -Dunifi.datadir="${DIR}/data"
+	-Dunifi.logdir="/var/log/unifi"  # -Dunifi.logdir="${DIR}/logs" # Ignored?
+	-Dunifi.rundir="/var/run/unifi"  # -Dunifi.rundir="${DIR}/run"
+)
+
+name="containerised Ubiquiti UniFi Controller"
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} ${JVM_OPTS[@]:-} ${UNIFI_OPTS[@]:-} -cp ${jar} ${class} start"
+command_background="true"
+#command_user="unifi:unifi"
+start_stop_daemon_args="--wait 30000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+pidfile="/var/run/containers/${PN}.pid"
+retry='TERM/10/KILL/2'
+command_progress='true'
+
+extra_commands="info"
+extra_stopped_commands="inspect"
+description_inspect="Launch container interactively"
+description_info="Show basic build/configuration data"
+description="Ubiquiti UniFi Controller software"
+
+depend() {
+	need containers
+}
+
+_checkpaths() {
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0750 --owner unifi:unifi --quiet /var/run/unifi || return 1
+	else
+		checkpath --directory-truncate --mode 0750 --owner unifi:unifi --quiet /var/run/unifi || return 1
+	fi
+	checkpath --directory --mode 0775 --owner unifi:unifi --quiet /var/log/unifi || return 1
+}
+
+inspect() {
+	_checkpaths || return 1
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	docker --log-level=debug run --interactive "${dockeropts[@]}" "${dockermounts[@]}" "${dockerports[@]}" \
+			--name "openrc-${PN}-${PV}-inspect" \
+			--replace \
+			--restart no \
+			--rm \
+			--entrypoint=/bin/sh \
+		"${dockerimage}"
+}
+
+start_pre() {
+	local id='' dr_id=''
+	local -i update=0 rc=0 rcc=0
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	_checkpaths || return 1
+
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "/var/run/${PN}/${RC_SVCNAME}.pid" ] && rm "/var/run/${PN}/${RC_SVCNAME}.pid" || :
+
+	if yesno "${REPLACE_CERT:-no}"; then
+		if ! command -v openssl >/dev/null 2>&1; then
+			eerror "Cannot execute 'openssl' - not updating SSL certificate"
+		elif ! [ -s "${PRIVATE_KEY:-}" ]; then
+			eerror "Cannot read private key '${PRIVATE_KEY:-}' - not updating SSL certificate"
+		elif ! [ -s "${CA_CHAIN:-}" ]; then
+			eerror "Cannot read CA chain '${CA_CHAIN:-}' - not updating SSL certificate"
+		else
+			key="$( basename "${PRIVATE_KEY}" )"
+			update=1
+			if [ -s "/var/lib/unifi/certs/${key}" ] && [ -s "/var/lib/unifi/certs/${key}.md5" ]; then
+				if md5sum -c "/var/lib/unifi/certs/${key}.md5" >/dev/null 2>&1; then
+					einfo "SSL certificate unchanged - not updating"
+					update=0
+				fi
+			fi
+		fi
+		if (( update )); then
+			local ALIAS='unifi'
+			local PASSWORD='aircontrolenterprise'
+
+			cp "${PRIVATE_KEY}" /var/lib/unifi/certs/
+			cp "${CA_CHAIN}" /var/lib/unifi/certs/
+
+			if [ -s /var/lib/unifi/data/keystore ]; then
+				suffix="$( date +'%s' )"
+				einfo "Creating keystore backup as 'keystore.${suffix}'"
+				cp /var/lib/unifi/data/keystore "/var/lib/unifi/data/keystore.${suffix}"
+			fi
+			PKCS12="$( mktemp -p /var/lib/unifi/certs/ unifi.pkcs12.XXXX )" || {
+				eerror "mktemp failed: ${?}"
+				rm "/var/lib/unifi/data/keystore.${suffix}"
+				return ${?}
+			}
+			chmod 0664 "${PKCS12}"
+			chmod 0644 /var/lib/unifi/data/keystore
+			chown unifi:unifi "${PKCS12}" /var/lib/unifi/data/keystore
+
+			local -a openssl_args=(
+				pkcs12
+				-export
+				-in "${CA_CHAIN}"
+				-inkey "${PRIVATE_KEY}"
+				-out "${PKCS12}"
+				-passout pass:"${PASSWORD}"
+				-name "${ALIAS}"
+			)
+			openssl "${openssl_args[@]}" || {
+				eerror "openssl failed: ${?}"
+				rm "/var/lib/unifi/data/keystore.${suffix}" "${PKCS12}"
+				return ${?}
+			}
+
+			ebegin "Replacing UniFi Controller SSL certificate"
+			docker run "${dockeropts[@]}"					\
+					--cap-drop ALL					\
+					--name "openrc-${PN}-${PV}-keytool"		\
+					--replace					\
+					--restart no					\
+					--rm						\
+					--entrypoint '/bin/sh'				\
+				"${dockerimage}" -c "
+				keytool -list						\
+					-alias ${ALIAS}					\
+					-keystore /var/lib/unifi/data/keystore		\
+					-storepass ${PASSWORD}				\
+				>/dev/null 2>&1 &&					\
+				keytool -delete						\
+					-alias ${ALIAS}					\
+					-keystore /var/lib/unifi/data/keystore		\
+					-storepass ${PASSWORD}				\
+				>/dev/null 2>&1 ;					\
+				keytool -importkeystore					\
+					-srckeystore "${PKCS12}"			\
+					-srcstoretype PKCS12				\
+					-srcstorepass "${PASSWORD}"			\
+					-destkeystore /var/lib/unifi/data/keystore	\
+					-deststorepass "${PASSWORD}"			\
+					-destkeypass "${PASSWORD}"			\
+					-srcalias "${ALIAS}"				\
+					-noprompt					\
+				>/dev/null 2>&1
+				"
+					#--network none \  # This disables hostname injection
+			rc=${?}
+
+			if dr_id="$( $docker ps -a | grep -- "\sopenrc-${PN}-${PV}-keytool$" | awk '{ prnt $1 }' )" && [ -n "${dr_id:-}" ]; then
+				if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+					: $(( rcc = $( podman inspect --format '{{.State.ExitCode}}' "${dr_id}" 2>/dev/null || echo "${?}" ) ))
+				else
+					: $(( rcc = $( docker inspect --format '{{.State.ExitCode}}' "${dr_id}" 2>/dev/null || echo "${?}" ) ))
+				fi
+			fi
+
+			if [ -n "${rcc:-}" ] && [ "${rc}" -ne "${rcc}" ]; then
+				if [ "${rc}" -gt "${rcc}" ]; then
+					ewarn "Return code (${rc}) differs from container exit code (${rcc}) - proceeding with former ..."
+				else
+					ewarn "Return code (${rc}) differs from container exit code (${rcc}) - proceeding with latter ..."
+					rc=${rcc}
+				fi
+			else
+				veinfo "'${docker} run' returned '${rc}'"
+			fi
+
+			eend ${rc} "keytool failed: ${rc}"
+
+			if (( rc )); then
+				ebegin "Restoring keychain backup"
+				mv "/var/lib/unifi/data/keystore.${suffix}" "/var/lib/unifi/data/keystore"
+				eend ${?}
+			else
+				md5sum "/var/lib/unifi/certs/${key}" > "/var/lib/unifi/certs/${key}.md5"
+			fi
+			rm "${PKCS12}"
+			unset PKCS12
+		fi
+	fi
+}
+
+info() {
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	_checkpaths || return 1
+
+	ebegin "Checking UniFi Controller status"
+	if service_started; then
+		docker exec "openrc-${PN}-${PV}" \
+			java \
+				${JVM_OPTS[@]:-} \
+				${UNIFI_OPTS[@]:-} \
+				-cp ${jar} \
+				${class} \
+				info
+	else
+		docker run "${dockeropts[@]}" \
+				--cap-drop ALL \
+				--name "openrc-${PN}-${PV}-info" \
+				--network none \
+				--replace \
+				--restart no \
+				--rm \
+			"${dockerimage}" \
+				${JVM_OPTS[@]:-} \
+				${UNIFI_OPTS[@]:-} \
+				-cp ${jar} \
+				${class} \
+				info
+	fi
+	eend ${?} "Status check failed"
+			#--network none \  # This disables hostname injection
+}
+
+stop() {
+	#ebegin "Stopping UniFi Controller service"
+	su - unifi -s /bin/sh -c 'touch /var/run/unifi/server.stop'
+
+	#start-stop-daemon --stop			\
+	#	--exec java				\
+	#	--pidfile "${pidfile}"			\
+	#	--user unifi:unifi			\
+	#	--retry 'TERM/10/KILL/2'		\
+	#	--progress
+	#eend ${?} "Stopping ace.jar failed: ${?}"
+
+	default_stop
+}
+
+start_post() {
+	local -i wait=15 count=0 oldpid=0 pid=0 expect_pid=0 have_pid=0
+	local sleep='1' pid_file="/var/run/${PN}/${RC_SVCNAME}.pid"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "${DOVECOT_PIDFILE}" ] && rm "${DOVECOT_PIDFILE}" || :
+	fi
+}

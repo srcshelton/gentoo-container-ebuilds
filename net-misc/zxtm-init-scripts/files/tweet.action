@@ -1,0 +1,9 @@
+arg!host	zxtm
+arg!type	update
+describe!host	Originating ZXTM
+describe!type	Tweet type ("update" or "direct")
+note	Send%20alert%20messages%20to%20Twitter
+program	tweet.pl
+timeout	10
+type	program
+verbose	Yes

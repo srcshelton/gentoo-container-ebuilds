@@ -1,0 +1,12 @@
+# /etc/conf.d/dovecot: config file for /etc/init.d/dovecot
+
+# If you require more than one instance of dovecot you can create symbolic
+# links to dovecot service like so
+#   cd /etc/init.d/
+#   ln -s dovecot dovecot.foo
+#   cd ../dovecot/
+#   cp dovecot.conf dovecot.foo.conf
+# You'll also need to specify a pidfile in that dovecot.foo.conf file.
+
+# Check changes into a (pre-existing) git repo in /etc/dovecot?
+#DOVECOT_USE_GIT=0

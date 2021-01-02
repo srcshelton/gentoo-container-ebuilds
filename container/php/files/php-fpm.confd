@@ -1,0 +1,7 @@
+# Set the umask of the FPM process to the given (octal) value. This is
+# passed directly to start-stop-daemon. If not specified, the system
+# default will be used.
+#PHP_FPM_UMASK=0002
+
+# Check changes into a (pre-existing) git repo in /etc/php?
+#PHP_USE_GIT=0

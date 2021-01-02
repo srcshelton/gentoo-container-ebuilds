@@ -1,0 +1,261 @@
+#!/sbin/openrc-run
+# Copyright 1999-2014 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${SPAMPD_PIDDIR:=/var/run/${RC_SVCNAME}}
+: ${SPAMPD_PIDFILE:=${SPAMPD_PIDDIR}/spampd.pid}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+PN="${RC_SVCNAME:=spampd}" # PN='spampd'
+PV='@PVR@'
+CATEGORY='mail-filter'
+svc_port="$( echo "${SPAMPD_OPTS:-}" | grep -Eo -- '--(port=[^[:space:]]+|host=[^[:space:]]+:[[:digit:]]+)([[:space:]]|"|$)' | cut -d'=' -f 2- | cut -d':' -f 2- | awk '{ print $1 }' )"
+dockeropts=(
+	#--log-level debug
+	--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+	--mount type=bind,source=/var/run/mysqld/,destination=/var/run/mysqld/,ro=true
+
+	--mount type=bind,source=/etc/GeoIP.conf,destination=/etc/GeoIP.conf,ro=true
+	--mount type=bind,source=/var/lib/geoip/,destination=/usr/share/GeoIP/,ro=true
+
+	--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/mail/spamassassin/
+	--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/spamassassin/
+	#--mount type=bind,source=/usr/share/spamassassin/,destination=/usr/share/spamassassin/,ro=true
+	--mount type=bind,source=/var/lib/spamassassin/,destination=/var/lib/spamassassin/
+
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/log/${PN}/
+	--mount type=bind,source=/var/run/${PN}/,destination=/var/run/${PN}/
+
+	--mount type=bind,source=/etc/passwd,destination=/etc/passwd,ro=true
+	--mount type=bind,source=/etc/group,destination=/etc/group,ro=true
+	--mount type=bind,source=/etc/shadow,destination=/etc/shadow,ro=true
+	--mount type=bind,source=/etc/gshadow,destination=/etc/gshadow,ro=true
+	--mount type=bind,source=/root/,destination=/root/
+	--mount type=bind,source=/home/,destination=/home/
+	--mount type=bind,source=/storage/mail/,destination=/storage/mail/
+
+	#--network host
+	#--publish 10025:10025/tcp
+	${svc_port:+--network host}
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	#${svc_port:+--publish ${svc_port}:${svc_port}/tcp}
+
+	--interactive
+	--name "openrc-${PN}-${PV}"
+	--restart on-failure
+	#--rm
+	--tty
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised spampd"
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} --pid=\"${SPAMPD_PIDFILE}\"${SPAMPD_OPTS:+ ${SPAMPD_OPTS}} --debug --nodetach"
+command_background="true"
+#command_user="mail:mail"
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+pidfile="/var/run/containers/${PN}.pid"
+retry='10'
+command_progress='true'
+
+#required_dirs="${SPAMPD_PIDDIR}"
+
+extra_stopped_commands="forceupdate update"
+extra_started_commands="clean"
+description_forceupdate="Download and force compilation of spamassassin and geoip updates"
+description_update="Download and compile spamassassin and geoip updates"
+description_clean="run DCC maintenance"
+description="An extensible mail filter which can identify and tag spam"
+
+depend() {
+	use containers
+	use logger mysql postgresql
+	before mta
+}
+
+update() {
+	local PN='' PV='' CATEGORY='' dockerimage='' force="${1:-}"
+	local -a dockeropts=()
+
+	PN='spamassassin-update'
+	PV='3.4.4-r4'
+	CATEGORY='mail-filter'
+	dockeropts=(
+		#--log-level debug
+		--cap-drop ALL
+		--cap-add SETGID
+		--cap-add SETUID
+		--interactive
+		--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+		--mount type=bind,source=/etc/GeoIP.conf,destination=/etc/GeoIP.conf,ro=true
+		--mount type=bind,source=/var/lib/geoip/,destination=/usr/share/GeoIP
+		--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/mail/spamassassin
+		--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/spamassassin
+		#--mount type=bind,source=/usr/share/spamassassin/,destination=/usr/share/spamassassin # Unused
+		--mount type=bind,source=/var/lib/spamassassin/,destination=/var/lib/spamassassin
+		${force:+--mount type=bind,source=/dev/null,destination=/.force-update,ro=true}
+		--name "openrc-${PN}-${PV}"
+
+		--network host
+
+		--rm
+		--tty
+	)
+	dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}-update" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+	if [ -z "${force:-}" ]; then
+		einfo "Updating spamassassin data ..."
+	else
+		einfo "Force-updating spamassassin data ..."
+	fi
+	docker run "${dockeropts[@]}" \
+			--name "openrc-${PN}-${PV}-update" \
+			--replace \
+			--restart no \
+			--rm \
+		"${dockerimage}" || rc=${?}
+
+	return ${rc}
+}
+
+forceupdate() {
+	update force
+}
+
+start_pre() {
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0775 --owner mail:mail --quiet "/var/run/${PN}" || return 1
+	else
+		checkpath --directory-truncate --mode 0775 --owner mail:mail --quiet "/var/run/${PN}" || return 1
+	fi
+	checkpath --directory --mode 0755 --owner root:root --quiet "/var/log/${PN}" || return 1
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${SPAMPD_PIDFILE}" ] && rm "${SPAMPD_PIDFILE}" || :
+}
+
+start_post() {
+	# Additional delay for sa-update/geoipupdate...
+	local -i wait=120 count=0 oldpid=0 pid=0 expect_pid=1 have_pid=0
+	local sleep='1' pid_file="${SPAMPD_PIDFILE}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+clean() {
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	#docker run "${dockeropts[@]}" \
+	#		--name "openrc-${PN}-${PV}-dcc-clean" \
+	#		--replace \
+	#		--restart no \
+	#		--rm \
+	#		--entrypoint=/bin/sh \
+	#	"${dockerimage}" -c /etc/cron.daily/dccd
+	docker exec "openrc-${PN}-${PV}" \
+		sh -c /etc/cron.daily/dccd
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "${SPAMPD_PIDFILE}" ] && rm "${SPAMPD_PIDFILE}" || :
+	fi
+}

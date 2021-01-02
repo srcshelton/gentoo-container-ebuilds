@@ -1,0 +1,180 @@
+#!/sbin/openrc-run
+# Copyright 1999-2017 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${REDIS_DIR:=/var/lib/redis}
+: ${REDIS_CONF:=/etc/redis/redis.conf}
+: ${REDIS_OPTS:="${REDIS_CONF}"}
+: ${REDIS_USER:=redis}
+: ${REDIS_GROUP:=redis}
+: ${REDIS_TIMEOUT:=30}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+PN="${RC_SVCNAME:=redis}" # PN='redis'
+PV='@PVR@'
+CATEGORY='dev-db'
+dockeropts=(
+	#--log-level debug
+	--cap-drop ALL
+
+	--volume /dev/hugetlb:/dev/hugetlb
+
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+	--mount type=bind,source=/etc/${PN},destination=/etc/${PN},ro=true
+	--mount type=bind,source=/var/lib/${PN},destination=/var/lib/${PN}
+	--mount type=bind,source=/var/log/${PN},destination=/var/log/${PN}
+	--mount type=bind,source=/var/run/${PN},destination=/var/run/${PN}
+
+	--network host
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	#--publish 6379:6379/tcp
+
+	--interactive
+	--name "openrc-${PN}-${PV}"
+	--restart on-failure
+	#--rm
+	--tty
+	--workdir "${REDIS_DIR}"
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised redis"
+# https://bugs.gentoo.org/631002#c10
+# Force '--daemonize no' to override the config file 
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} ${REDIS_OPTS} --daemonize no"
+command_background="true"
+#command_user="${REDIS_USER}:${REDIS_GROUP}"
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log --chdir \"${REDIS_DIR}\""
+pidfile="/var/run/containers/${RC_SVCNAME}.pid"
+retry="${REDIS_TIMEOUT}"
+
+description="A persistent caching system, key-value and data structures database"
+
+depend() {
+	need containers
+	use logger
+	after keepalived
+}
+
+start_pre() {
+	local git=""
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	checkpath --directory --mode 0755 --owner redis:redis --quiet "/var/run/${PN}" || return 1
+	checkpath --directory --mode 0755 --owner redis:redis --quiet "/var/log/${PN}" || return 1
+
+	if [ -n "${REDIS_USE_GIT:-}" ] && [ "${REDIS_USE_GIT}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+	if [ -d /etc/redis/.git ] && [ -n "${git:-}" ]; then
+		if ! [ -s /etc/redis/.gitignore ]; then
+			cat >> /etc/redis/.gitignore <<-EOF
+				**/._cfg[0-9][0-9][0-9][0-9]_*
+				**/.keep*
+				**/.*.swp
+			EOF
+		fi
+		pushd /etc/redis >/dev/null 2>&1 &&
+			git status 2>/dev/null | grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+			einfo "Committing configuration changes to git" &&
+			git add --all . >/dev/null 2>&1 &&
+			git status | tail -n +4 &&
+			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+		popd >/dev/null 2>&1
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "/var/run/${PN}/${RC_SVCNAME}.pid" ] && rm "/var/run/${PN}/${RC_SVCNAME}.pid" || :
+}
+
+start_post() {
+	local -i wait=10 count=0 oldpid=0 pid=0 expect_pid=1 have_pid=0
+	local sleep='1' pid_file="/var/run/${PN}/${RC_SVCNAME}.pid"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "/var/run/${PN}/${RC_SVCNAME}.pid" ] && rm "/var/run/${PN}/${RC_SVCNAME}.pid" || :
+	fi
+}

@@ -1,0 +1,368 @@
+#!/sbin/openrc-run
+
+set_phpvars() {
+	PHPSLOT="${SVCNAME#php-fpm-}"
+	if [ "${PHPSLOT}" = "php-fpm" ] ; then
+		#PHPSLOT="$(eselect php show fpm)"
+		PHPSLOT="php$( echo '@PVR@' | cut -d'.' -f 1-2 )"
+		PHP_FPM_PID="/var/run/php/php-fpm.pid"
+	else
+		PHP_FPM_PID="/var/run/php/php-fpm-${PHPSLOT}.pid"
+	fi
+
+	PHP_FPM_CONF="/etc/php/fpm-${PHPSLOT}/php-fpm.conf"
+}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+set_phpvars
+
+WEB_SERVER='lighttpd'
+CONTENT_IMAGE='service.www-servers.web-content:latest'
+CPN='lighttpd'
+CPV='1.4.55-r1'
+PN='php'
+PV='@PVR@'
+CATEGORY='dev-lang'
+#svc_port="$( sed 's/;.*$//' /etc/php/fpm-${PHPSLOT}/fpm.d/*.conf | grep 'listen' | cut -d'=' -f 2- | cut -d':' -f 2- | head -n 1 | tr -cd '[:digit:]' )"
+dockeropts=(
+	#--log-level debug
+
+	--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add FOWNER
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--volume /dev/hugetlb:/dev/hugetlb
+
+	--network host
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	##--publish 9000:9000/tcp
+	#${svc_port:+--publish ${svc_port}:${svc_port}/tcp}
+
+	--interactive
+	--name "openrc-${PN}-${PV}"
+	--restart on-failure
+	#--rm
+	--tty
+)
+dockermounts=(
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+	--mount type=bind,source=/var/run/mysqld/,destination=/var/run/mysqld/,ro=true
+
+	--mount type=bind,source=/etc/ssl/,destination=/etc/ssl/,ro=true
+
+	--mount type=bind,source=/etc/php/,destination=/etc/php/,ro=true
+
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/log/${PN}/
+	#--mount type=bind,source=/var/log/${PN}/roundcube/,destination=/var/www/localhost/htdocs/roundcube/logs/
+
+	--mount type=bind,source=/var/run/${PN}/,destination=/var/run/${PN}/
+
+)
+if [ -d /var/www/localhost/htdocs ]; then
+	for webapp in /var/www/localhost/htdocs/*; do
+		[ "${webapp%/\*}" = "${webapp}" ] || continue
+		[ -d "${webapp}" ] || continue
+		for dir in "${webapp}"/*; do
+			[ "${dir%/\*}" = "${dir}" ] || continue
+			[ -d "${dir}" ] || continue
+			dockermounts+=(
+				--mount type=bind,source=${dir},destination=${dir}
+			)
+		done
+	done
+fi
+unset dir webapp
+dockervolumes=(
+	--volumes-from "openrc-${CPN}-${CPV}.web-content"
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised php-fpm"
+command_args="--log-level=info run ${dockeropts[@]} ${dockermounts[@]} ${dockervolumes[@]} ${dockerimage} --fpm-config \"${PHP_FPM_CONF}\" --pid \"${PHP_FPM_PID}\" --nodaemonize --force-stderr"
+command_background="true"
+#command_user="root:root"
+start_stop_daemon_args="--wait 1000 ${PHP_FPM_UMASK:+--umask ${PHP_FPM_UMASK} }--stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+# php-fpm logs that it has received QUIT and TERM signals, but does nothing in
+# response :(
+retry='SIGQUIT/1/SIGTERM/1/SIGKILL/2'
+pidfile="/var/run/containers/${PN}.pid"
+
+extra_commands="configtest"
+extra_started_commands="reload sync"
+extra_stopped_commands="inspect"
+description_configtest="Validate service's configuration"
+description_sync="trigger Roundcube sync processes"
+description_inspect="Launch container interactively"
+description="The PHP language runtime engine"
+
+depend() {
+	need containers mysql
+	use logger
+}
+
+_checkpaths() {
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	# Don't erase PID if performing a configtest whilst running ...
+	if service_started || service_starting; then
+		checkpath --directory --mode 0755 --owner root:root --quiet "/var/run/${PN}" || return 1
+	else
+		checkpath --directory-truncate --mode 0755 --owner root:root --quiet "/var/run/${PN}" || return 1
+	fi
+	checkpath --directory --mode 0775 --owner "nobody:${WEB_SERVER}" --quiet "/var/log/${PN}" || return 1
+	checkpath --directory --mode 0770 --owner "nobody:${WEB_SERVER}" --quiet "/var/log/${PN}/roundcube" || return 1
+	checkpath --directory --mode 0770 --owner "nobody:${WEB_SERVER}" --quiet "/var/log/${PN}/wordpress" || return 1
+}
+
+configtest() {
+	_checkpaths || return 1
+
+	ebegin "Testing PHP FastCGI Process Manager configuration"
+	# Hide the "test is successful" message (which goes to stderr) if
+	# the test passed, but show the entire output if the test failed
+	# because it may contain hints about the problem.
+	OUTPUT=$(
+		if service_started; then
+			docker exec "openrc-${PN}-${PV}" \
+				php-fpm --fpm-config "${PHP_FPM_CONF}" --test 2>&1
+		else
+			docker run "${dockeropts[@]}" "${dockermounts[@]}" "${dockervolumes[@]}" \
+					--cap-drop ALL \
+					--network none \
+					--name "openrc-${PN}-${PV}-config-test" \
+					--network none \
+					--replace \
+					--restart no \
+					--rm \
+				"${dockerimage}" --fpm-config "${PHP_FPM_CONF}" --test 2>&1
+		fi
+	)
+
+	# Save this so `echo` doesn't clobber it.
+	local exit_code=$?
+	[ $exit_code -ne 0 ] && echo "${OUTPUT}" >&2
+	eend $exit_code
+}
+
+inspect() {
+	_checkpaths || return 1
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	docker --log-level=info run --interactive "${dockeropts[@]}" "${dockermounts[@]}" "${dockervolumes[@]}" \
+			--name "openrc-${PN}-${PV}-inspect" \
+			--replace \
+			--restart no \
+			--rm \
+			--entrypoint=/bin/sh \
+		"${dockerimage}"
+}
+
+start_pre() {
+	local git='' dir='/etc/php'
+	local -i rc=0
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		rc=1
+	fi
+	if ! docker image ls "${CONTENT_IMAGE%:*}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${CONTENT_IMAGE%:*}' not found"
+		rc=1
+	fi
+	if [ $(( rc )) -ne 0 ]; then
+		return ${rc}
+	fi
+
+	_checkpaths || return 1
+
+        # If configtest fails, we don't have to sit around for five
+        # seconds waiting for a pid to show up.
+        configtest || return $?
+
+	if [ -n "${PHP_USE_GIT:-}" ] && [ "${PHP_USE_GIT}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+	if [ -d "${dir}/.git" ] && [ -n "${git:-}" ]; then
+		if ! [ -s "${dir}/.gitignore" ]; then
+			cat >> "${dir}/.gitignore" <<-EOF
+				**/._cfg[0-9][0-9][0-9][0-9]_*
+				**/.keep*
+				**/.*.swp
+			EOF
+		fi
+		pushd "${dir}/">/dev/null 2>&1 &&
+			git status 2>/dev/null | grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+			einfo "Committing configuration changes to git" &&
+			git add --all . >/dev/null 2>&1 &&
+			git status | tail -n +4 &&
+			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+		popd >/dev/null 2>&1
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		veinfo "Attempting to remove old 'openrc-${PN}-${PV}' container '${id}' ..."
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	#id="$( docker ps -a --filter "name=openrc-${CPN}-${CPV}.web-content" --format '{{.ID}}' )"
+	#if [ -n "${id:-}" ]; then
+	#	veinfo "Attempting to remove old 'openrc-${CPN}-${CPV}.web-content' container '${id}' ..."
+	#	docker rm --volumes "${id}" >/dev/null 2>&1
+	#fi
+	unset id
+
+	id="$( docker ps -a --filter "name=openrc-${CPN}-${CPV}.web-content" --format '{{.ID}}' )"
+	if [ -z "${id:-}" ]; then
+		ebegin "Generating web-content volumes from '${RC_SVCNAME}'"
+		docker run \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${CPN}-${CPV}.web-content" \
+				--replace \
+				--restart no \
+				--entrypoint=/bin/true \
+			"${CONTENT_IMAGE}"
+		eend ${?} "Launching container 'openrc-${CPN}-${CPV}.web-content' from image '${CONTENT_IMAGE}' via service '${RC_SVCNAME}' failed: ${?}" || return 1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${PHP_FPM_PID}" ] && rm "${PHP_FPM_PID}" || :
+}
+
+start_post() {
+	local -i wait=60 count=0 oldpid=0 pid=0 expect_pid=1 have_pid=0
+	local sleep='1' pid_file="${PHP_FPM_PID}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+reload() {
+	local -i pid=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	configtest || return 1
+
+	ebegin "Reloading PHP FastCGI Process Manager"
+	#start-stop-daemon --signal HUP \
+	#	--quiet --pidfile "${PHP_FPM_PID}"
+	if [ -s "${PHP_FPM_PID}" ]; then
+		: $(( pid = $( cat "${PHP_FPM_PID}" ) ))
+	fi
+	if [ $(( pid )) -gt 1 ]; then
+		kill -USR2 ${pid}
+	fi
+	eend ${?}
+}
+
+sync() {
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	#docker run "${dockeropts[@]}" "${dockermounts[@]}" "${dockervolumes[@]}" "${dockerports[@]}" \
+	#		--name "openrc-${PN}-${PV}-roundcube-sync" \
+	#		--replace \
+	#		--restart no \
+	#		--rm \
+	#		--entrypoint=/bin/sh \
+	#	"${dockerimage}" -c /usr/libexec/entrypoint.d/roundcube-sync.sh
+	docker exec "openrc-${PN}-${PV}" /usr/libexec/entrypoint.d/roundcube-sync.sh
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${CPN}-${CPV}.web-content" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+
+		[ -e "${PHP_FPM_PID}" ] && rm "${PHP_FPM_PID}" || :
+	fi
+}

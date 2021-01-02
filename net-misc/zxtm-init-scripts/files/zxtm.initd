@@ -1,0 +1,171 @@
+#!/sbin/openrc-run
+#
+# Start and stop Zeus products
+
+ZEUSHOME="${ZEUSHOME:-/opt/zxtm}"
+
+chroot="${ZXTM_CHROOT:-}"
+required_dirs="${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}"
+command="${ZEUSHOME%%/}/zxtm/bin/zeus.zxtm"
+pidfile="${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}/zxtm/internal/pid"
+
+#product_owner='Zeus'
+#product_owner='Riverbed'
+#product_owner='Brocade'
+product_owner='Pulse Secure'
+
+name="${product_owner} Virtual Traffic Manager"
+description="${product_owner} VTM proides Load Balancer and Traffic Management capabilities"
+
+# ... is this actually necessary?  What magic exists in the product to parse
+# this function?!
+#
+setup_zh() {
+	# This is set to ZEUSHOME upon install (must not be indented)
+cd /opt/zxtm
+}
+
+depend() {
+	need localmount
+	use net
+	use logger dns
+	after bootmisc
+}
+
+start_pre() {
+	[[ -d "${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}" ]] || return 1
+
+	if [[ -n "${ZXTM_CHROOT:-}" ]]; then
+		[[ -d "${ZXTM_CHROOT%%/}"/mnt/host/etc ]] || mount / "${ZXTM_CHROOT%%/}"/mnt/host -o bind
+		[[ -e "${ZXTM_CHROOT%%/}"/dev/initctl ]]  || mount -t devtmpfs chrootdevtmpfs "${ZXTM_CHROOT%%/}"/dev
+		[[ -d "${ZXTM_CHROOT%%/}"/sys/kernel ]]   || mount -t sysfs chrootsysfs "${ZXTM_CHROOT%%/}"/sys
+		[[ -d "${ZXTM_CHROOT%%/}"/proc/net ]]     || mount -t proc chrootproc "${ZXTM_CHROOT%%/}"/proc
+
+		service_set_value chroot "${ZXTM_CHROOT%%/}"
+	fi
+}
+
+start_component() {
+	local command="${1:-}" ; shift
+	local pidfile="${1:-}" ; shift
+	local program="${*:-}"
+
+	local -i rc=0
+	local line
+
+	ebegin "Starting ${program}"
+	eindent ; eindent
+	{
+	start-stop-daemon 2>&1 --start				\
+		${ZXTM_CHROOT:+--chroot "${ZXTM_CHROOT%%/}"}	\
+		--chdir "${ZEUSHOME%%/}"			\
+		--exec "${ZEUSHOME%%/}/${command}"		\
+		--pidfile "${ZEUSHOME%%/}/${pidfile}"
+	rc=${?}
+	} | while read -r line; do
+		if echo "${line}" | grep -q '^\s*INFO\s\+'; then
+			einfo "$( echo "${line}" | sed 's/^\s*INFO\s\+//' )"
+		else
+			echo "     ${line}"
+		fi
+	done
+	eoutdent ; eoutdent
+	eend $? "Failed to start ${program}"
+
+	return ${rc}
+}
+
+start_admin() {
+	local command=admin/bin/zeus.admin
+	local pidfile=admin/internal/pid
+	local program="${product_owner} VTM Administration Server"
+
+	start_component "${command}" "${pidfile}" "${program}"
+}
+
+start_zxtm() {
+	local -i rc
+
+	local zcommand=zxtm/bin/zeus.zxtm
+	local zpidfile=zxtm/internal/pid
+	local zprogram="${product_owner} Virtual Traffic Manager"
+
+	start_component "${zcommand}" "${zpidfile}" "${zprogram}"
+	rc=${?}
+
+	if ! (( ${rc} )); then
+		zcommand=zxtm/bin/procmon
+		zpidfile=zxtm/internal/procmonpid
+		zprogram="${product_owner} VTM Watchdog"
+
+		ebegin "Starting ${zprogram}"
+		start-stop-daemon 2>&1 --start				\
+			${ZXTM_CHROOT:+--chroot "${ZXTM_CHROOT%%/}"}	\
+			--chdir "${ZEUSHOME%%/}"			\
+			--exec "${ZEUSHOME%%/}/${zcommand}"		\
+			--pidfile "${ZEUSHOME%%/}/${zpidfile}"		\
+			--background --make-pidfile 			\
+			--stderr "${ZEUSHOME%%/}"/zxtm/log/procmon	\
+			-- -q
+		eend $? "Failed to start ${zprogram}"
+	fi
+
+	return ${rc}
+}
+
+start_configd() {
+	local command=zxtm/bin/zeus.configd
+	local pidfile=zxtm/internal-configd/pid
+	local program="${product_owner} VTM REST Daemon"
+
+	start_component "${command}" "${pidfile}" "${program}"
+}
+
+start() {
+	# ZXTM admin web UI
+	start_admin
+
+	ulimit -c unlimited 2>/dev/null
+
+	# ZXTM core
+	start_zxtm
+
+	# ZXTM configd
+	if grep -qi 'rest!enabled\s\+yes' "${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}"/zxtm/conf/settings.cfg
+	then
+		start_configd
+	else
+		ewarn 'REST API not enabled in ZXTM configuration - not' \
+		      'loading zeus.configd'
+	fi
+}
+
+stop() {
+	local -a pids=()
+	local -i rc=0
+	local line pid
+
+	pids+=( "${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}"/zxtm/internal-configd/pid )
+	pids+=( "${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}"/zxtm/internal/procmonpid )
+	pids+=( "${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}"/zxtm/internal/pid )
+	pids+=( "${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}"/admin/internal/pid )
+
+	ebegin 'Stopping ZXTM components'
+	eindent ; eindent
+	for pid in "${pids[@]}"; do
+		{
+			start-stop-daemon 2>&1 --stop			\
+				--pidfile "${pid}"
+			rc+=${?}
+		} | while read -r line; do
+			if echo "${line}" | grep -q '^\s*INFO\s\+'; then
+				einfo "$( echo "${line}" | sed 's/^\s*INFO\s\+//' )"
+			else
+				echo "     ${line}"
+			fi
+		done
+	done
+	eoutdent ; eoutdent
+
+	eend $? 'Failed to stop ZXTM'
+}

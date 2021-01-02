@@ -1,0 +1,310 @@
+#!/sbin/openrc-run
+# Copyright 1999-2019 Gentoo Authors
+# Distributed under the terms of the GNU General Public License, v2 or later
+
+: ${DOVECOT_CONFDIR:=/etc/dovecot}
+: ${DOVECOT_CONF:=${DOVECOT_CONFDIR}/dovecot.conf}
+: ${DOVECOT_BASEDIR:=/var/run/dovecot}
+: ${DOVECOT_PIDFILE:=${DOVECOT_BASEDIR}/master.pid}
+
+DOVECOT_INSTANCE=${RC_SVCNAME##*.}
+if [ -n "${DOVECOT_INSTANCE:-}" ] && [ "${RC_SVCNAME}" != "dovecot" ]; then
+	DOVECOT_CONF="${DOVECOT_CONFDIR}/dovecot.${DOVECOT_INSTANCE}.conf"
+fi
+DOVECOT_BASEDIR="$(cat "${DOVECOT_CONF}" | sed 's/#.*$//' | grep 'base_dir\s*=' | cut -d'=' -f 2- | sed 's/^[[:space:]]\+// ; s/[[:space:]]\+$//')"
+DOVECOT_BASEDIR=${DOVECOT_BASEDIR:-/var/run/dovecot}
+DOVECOT_PIDFILE=${DOVECOT_BASEDIR}/master.pid
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+PN="${RC_SVCNAME:=dovecot}" # PN='dovecot'
+PV='@PVR@'
+CATEGORY='net-mail'
+dockeropts=(
+	#--log-level debug
+
+	--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add KILL
+	--cap-add NET_BIND_SERVICE
+	--cap-add SETGID
+	--cap-add SETUID
+	--cap-add SYS_CHROOT
+
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+
+	--mount type=bind,source=/etc/${PN}/,destination=/etc/${PN}/,ro=true
+	--mount type=bind,source=/etc/ssl/,destination=/etc/ssl/,ro=true
+
+	--mount type=bind,source=/var/lib/${PN}/,destination=/var/lib/${PN}/
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/log/${PN}/
+	--mount type=bind,source=/var/run/${PN}/,destination=/var/run/${PN}/
+
+	--mount type=bind,source=/root/,destination=/root/
+	--mount type=bind,source=/home/,destination=/home/
+	--mount type=bind,source=/storage/mail/,destination=/storage/mail/
+
+	--network host
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	##--publish 110:110/tcp
+	#--publish 143:143/tcp
+	##--publish 587:587/tcp
+	#--publish 993:993/tcp
+	##--publish 995:995/tcp
+	##--publish 2000:2000/tcp             # sieve_deprecated
+	##--publish 4190:4190/tcp             # sieve
+	#--publish 127.0.0.1:24242:24242/tcp  # stats
+
+	--interactive
+	--name "openrc-${PN}-${PV}"
+	--restart on-failure
+	#--rm
+	--tty
+	--workdir '/'
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised dovecot"
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} -F -c \"${DOVECOT_CONF}\""
+command_background="true"
+#command_user="dovecot:dovecot"
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+pidfile="/var/run/containers/${PN}.pid"
+
+required_files="${DOVECOT_CONF}"
+required_dirs="${DOVECOT_CONFDIR}"
+
+extra_commands="checkconfig"
+extra_started_commands="reload"
+extra_stopped_commands="inspect"
+description_checkconfig="Validate the service's configuration"
+description_inspect="Launch container interactively"
+description="An IMAP and POP3 server written with security primarily in mind"
+
+depend() {
+	after bootmisc ldap mysql ntp-client ntpd postgresql saslauthd slapd 
+	need containers
+	use logger
+	before postfix
+}
+
+checkconfig() {
+	ebegin "Checking dovecot configuration"
+
+	if service_started; then
+		DOVECOT_BASEDIR="$(
+			docker exec "openrc-${PN}-${PV}" \
+				dovecot -c ${DOVECOT_CONF} config -h base_dir 2>/dev/null |
+			tr -d '[:cntrl:]'
+		)"
+	else
+		DOVECOT_BASEDIR="$(
+			docker --log-level=info run \
+					${dockeropts[@]} \
+					--name "openrc-${PN}-${PV}-getconfig" \
+					--replace \
+					--restart no \
+					--rm \
+				${dockerimage} \
+					-c ${DOVECOT_CONF} config -h base_dir 2>/dev/null |
+			tr -d '[:cntrl:]'
+		)"
+	fi
+
+	if [ $(( $? )) -ne 0 ]; then
+		eerror "Error parsing ${DOVECOT_CONF}"
+		return 1
+	fi
+	if ! [ -d "${DOVECOT_BASEDIR:-}" ]; then
+		ewarn "dovecot base_dir '${DOVECOT_BASEDIR:-}' does not exist"
+	fi
+
+	eend 0
+}
+
+inspect() {
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	docker --log-level=info run --interactive ${dockeropts[@]} --name "openrc-${PN}-${PV}-inspect" --replace --restart no --rm --entrypoint=/bin/sh ${dockerimage} -c sh
+}
+
+start_pre() {
+	local git=""
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	if [ -n "${DOVECOT_USE_GIT:-}" ] && [ "${DOVECOT_USE_GIT}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0755 --owner root:root --quiet /var/run/dovecot || return 1
+	else
+		checkpath --directory-truncate --mode 0755 --owner root:root --quiet /var/run/dovecot || return 1
+	fi
+	checkpath --directory --mode 0750 --owner root:root --quiet /var/lib/dovecot || return 1
+	checkpath --directory --mode 0755 --owner dovecot:mail --quiet /var/log/dovecot || return 1
+
+	if [ -d "${DOVECOT_CONFDIR}/.git" ] && [ -n "${git:-}" ]; then
+		if ! [ -s "${DOVECOT_CONFDIR}/.gitignore" ]; then
+			cat >> "${DOVECOT_CONFDIR}/.gitignore" <<-EOF
+				**/._cfg[0-9][0-9][0-9][0-9]_*
+				**/.keep*
+				**/.*.swp
+			EOF
+		fi
+		pushd "${DOVECOT_CONFDIR}" >/dev/null 2>&1 &&
+			git status 2>/dev/null | grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+			einfo "Committing configuration changes to git" &&
+			git add --all . >/dev/null 2>&1 &&
+			git status | tail -n +4 &&
+			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+		popd >/dev/null 2>&1
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${DOVECOT_PIDFILE}" ] && rm "${DOVECOT_PIDFILE}" || :
+}
+
+start() {
+	local md=''
+
+	if [ -d /etc/dovecot/conf.d ]; then
+		cut -d':' -f 1,6 /etc/passwd | while IFS=':' read -r user home; do
+			md="$(
+				sed 's/#.*$//' /etc/dovecot/conf.d/*.conf |
+				grep 'mail_location\s*=' |
+				cut -d ':' -f 2- |
+				sed "s:%[un]:${user:-}: ; s:%h:${home:-}:"
+			)"
+			if [[ -d "${md}" ]]; then
+				#echo "${user} : ${md} -> $( readlink -e "${md}" )"
+				dockeropts+=( --mount type=bind,source=$( readlink -e ${md} ),destination=${md} )
+			fi
+		done
+		dockeropts+=( --mount type=bind,source=/etc/passwd,destination=/etc/passwd,ro=true )
+		dockeropts+=( --mount type=bind,source=/etc/group,destination=/etc/group,ro=true )
+		dockeropts+=( --mount type=bind,source=/etc/shadow,destination=/etc/shadow,ro=true )
+		dockeropts+=( --mount type=bind,source=/etc/gshadow,destination=/etc/gshadow,ro=true )
+		export command_args="run ${dockeropts[@]} ${dockerimage} -F -c \"${DOVECOT_CONF}\""
+	fi
+
+	default_start
+}
+
+start_post() {
+	local -i wait=30 count=0 oldpid=0 pid=0 expect_pid=1 have_pid=0
+	local sleep='1' pid_file="${DOVECOT_PIDFILE}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+reload() {
+	local -i pid=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || return 1
+
+	ebegin "Reloading ${RC_SVCNAME} configs and restarting auth/login processes"
+	#start-stop-daemon --signal HUP \
+	#	--quiet --exec /usr/sbin/dovecot --pidfile "${DOVECOT_PIDFILE}"
+	if [ -s "${DOVECOT_PIDFILE}" ]; then
+		: $(( pid = $( cat "${DOVECOT_PIDFILE}" ) ))
+	fi
+	if [ $(( pid )) -gt 1 ]; then
+		kill -HUP ${pid}
+	fi
+	eend ${?}
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "${DOVECOT_PIDFILE}" ] && rm "${DOVECOT_PIDFILE}" || :
+	fi
+}

@@ -1,0 +1,16 @@
+# Specify the UniFi installation directory, if relocated
+#
+#UNIFI_DIR="%INST_DIR%"
+
+# Optional JVM tunables...
+#
+#JAVA_ENTROPY_GATHER_DEVICE=
+#JVM_MAX_HEAP_SIZE=1024M
+#JVM_INIT_HEAP_SIZE=
+#JAVA_OPTS="-XX:+UseLargePages"
+
+# Replace the default self-signed certificate?
+#
+#REPLACE_CERT="yes"
+#PRIVATE_KEY="/etc/ssl/privkey.pem"
+#CA_CHAIN="/etc/ssl/fullchain.pem"

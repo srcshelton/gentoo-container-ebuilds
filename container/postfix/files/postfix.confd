@@ -1,0 +1,2 @@
+# Check changes into a (pre-existing) git repo in /etc/postfix?
+#POSTFIX_USE_GIT=0

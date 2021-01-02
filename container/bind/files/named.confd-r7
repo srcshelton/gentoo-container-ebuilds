@@ -1,0 +1,32 @@
+# Set various named options here.
+#
+#OPTIONS=""
+
+# Set this to the number of processors you want bind to use.
+# Leave this unchanged if you want bind to automatically detect the number
+#CPU="1"
+
+# Default pid file location
+PIDFILE="/var/run/named/named.pid"
+
+# Scheduling priority: 19 is the lowest and -20 is the highest.
+# Default: 0
+#NAMED_NICELEVEL="0"
+
+# Check changes into (pre-existing) git repos in /etc/bind & /var/bind?
+#NAMED_USE_GIT=0
+
+# Uncomment rc_named_use/rc_named_after for the database you need.
+# Its necessary to ensure the database backend will be started before named.
+
+# MySQL
+#rc_named_use="mysql"
+#rc_named_after="mysql"
+
+# PostgreSQL
+#rc_named_use="pg_autovacuum postgresql"
+#rc_named_after="pg_autovacuum postgresql"
+
+# LDAP
+#rc_named_use="ldap"
+#rc_named_after="ldap"

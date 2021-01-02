@@ -1,0 +1,242 @@
+#!/sbin/openrc-run
+# Copyright 1999-2018 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${SYSLOG_NG_CONFIGDIR:=/etc/syslog-ng}
+: ${SYSLOG_NG_CONFIGFILE:=${SYSLOG_NG_CONFIGDIR}/${RC_SVCNAME}.conf}
+: ${SYSLOG_NG_STATEFILE_DIR:=/var/lib/${RC_SVCNAME}}
+: ${SYSLOG_NG_STATEFILE:=${SYSLOG_NG_STATEFILE_DIR}/${RC_SVCNAME}.persist}
+: ${SYSLOG_NG_PIDFILE_DIR:=/var/run/syslog-ng}
+: ${SYSLOG_NG_PIDFILE:=${SYSLOG_NG_PIDFILE_DIR}/${RC_SVCNAME}.pid}
+: ${SYSLOG_NG_CONTROLFILE:=${SYSLOG_NG_PIDFILE_DIR}/${RC_SVCNAME}.ctl}
+
+: ${SYSLOG_NG_GROUP:=root}
+: ${SYSLOG_NG_USER:=root}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+fi
+
+PN="${RC_SVCNAME:=syslog-ng}" # PN='syslog-ng'
+PV='3.22.1'
+CATEGORY='app-admin'
+dockeropts=(
+	#--log-level debug
+	--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add DAC_READ_SEARCH
+	--cap-add FOWNER
+	--cap-add NET_BIND_SERVICE
+	--cap-add NET_BROADCAST
+	--cap-add NET_RAW
+	--cap-add SYSLOG
+	$( [[ -e /dev/tty12 ]] && echo '--device /dev/tty12:/dev/tty12' )
+	$( [[ -e /dev/console ]] && echo '--device /dev/console:/dev/console' )
+	$( [[ -e /dev/xconsole ]] && echo '--device /dev/xconsole:/dev/xconsole' )
+	--interactive
+	--mount type=bind,source=/etc/${PN},destination=/etc/${PN},ro=true
+	--mount type=bind,source=/var/lib/${PN},destination=/var/lib/${PN}
+	--mount type=bind,source=/var/log,destination=/var/log
+	--mount type=bind,source=/var/run/${PN},destination=/var/run/${PN}
+	--name "openrc-${PN}-${PV}"
+
+	--network=host
+	--publish 514:514/udp
+
+	#--restart on-failure
+	#--rm
+	--tty
+	--workdir "${SYSLOG_NG_STATEFILE_DIR}"
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised syslog-ng"
+# With release 3.22.1, process supervision fails to update the specified
+# pidfile, preventing openrc from being able to stop the service once started
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} --cfgfile \"${SYSLOG_NG_CONFIGFILE}\" --control \"${SYSLOG_NG_CONTROLFILE}\" --persist-file \"${SYSLOG_NG_STATEFILE}\" --pidfile \"${SYSLOG_NG_PIDFILE}\" ${SYSLOG_NG_OPTS:-} --process-mode foreground"
+command_background="true"
+#command_user="${SYSLOG_NG_USER}:${SYSLOG_NG_GROUP}"
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+pidfile="/var/run/containers/${RC_SVCNAME}.pid"
+
+extra_commands="checkconfig"
+extra_started_commands="reload"
+description_checkconfig="Check the configuration file that will be used by \"start\""
+description_reload="Reload the configuration without exiting"
+description="Syslog-ng is a syslog replacement with advanced filtering features."
+
+required_files="${SYSLOG_NG_CONFIGFILE}"
+#required_dirs="${SYSLOG_NG_PIDFILE_DIR}"
+
+depend() {
+	need hostname containers
+	use clock
+	after bootmisc
+	provide logger
+}
+
+checkconfig() {
+	local -i rc=0
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	ebegin "Checking your configfile (${SYSLOG_NG_CONFIGFILE})"
+	docker run ${dockeropts[@]} --name "openrc-${PN}-${PV}-checkconfig" --network none --restart no --replace --rm ${dockerimage} -s -f "${SYSLOG_NG_CONFIGFILE}" || rc=${?}
+	eend ${rc} "Configuration error. Please fix your configfile (${SYSLOG_NG_CONFIGFILE})"
+}
+
+start_pre() {
+	local git=""
+
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0755 --owner root:root --quiet "${SYSLOG_NG_PIDFILE_DIR}" || return 1
+	else
+		checkpath --directory-truncate --mode 0755 --owner root:root --quiet "${SYSLOG_NG_PIDFILE_DIR}" || return 1
+	fi
+	checkpath --directory --mode 0755 --owner root:root --quiet "/var/log/${PN}" || return 1
+
+	checkconfig || return 1
+	checkpath \
+			--directory \
+			--mode 0700 \
+			--owner "${SYSLOG_NG_USER}:${SYSLOG_NG_GROUP}" \
+			--quiet \
+			"${SYSLOG_NG_STATEFILE_DIR}" ||
+		return 1
+
+	if [[ ! -e /dev/log ]]; then
+		ln -s /var/run/"${PN}"/log /dev/log
+	fi
+
+	if [ -n "${SYSLOG_NG_USE_GIT:-}" ] && [ "${SYSLOG_NG_USE_GIT}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+	if [ -d "${SYSLOG_NG_CONFIGDIR}/.git" ] && [ -n "${git:-}" ]; then
+		if ! [ -s "${SYSLOG_NG_CONFIGDIR}/.gitignore" ]; then
+			cat >> "${SYSLOG_NG_CONFIGDIR}/.gitignore" <<-EOF
+				**/._cfg[0-9][0-9][0-9][0-9]_*
+				**/.keep*
+				**/.*.swp
+			EOF
+		fi
+		pushd "${SYSLOG_NG_CONFIGDIR}" >/dev/null 2>&1 &&
+			git status 2>/dev/null | grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+			einfo "Committing configuration changes to git" &&
+			git add --all . >/dev/null 2>&1 &&
+			git status | tail -n +4 &&
+			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+		popd >/dev/null 2>&1
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${SYSLOG_NG_PIDFILE}" ] && rm "${SYSLOG_NG_PIDFILE}" || :
+}
+
+start_post() {
+	local -i wait=5 count=0 oldpid=0 pid=0 expect_pid=1 have_pid=0
+	local sleep='1' pid_file="${SYSLOG_NG_PIDFILE}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( pid = $( docker inspect -f '{{.State.Pid}}' "openrc-${PN}-${PV}" ) ))
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+stop_pre() {
+	[ "${RC_CMD}" = "restart" ] && sleep 1
+	return 0
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "${SYSLOG_NG_PIDFILE}" ] && rm "${SYSLOG_NG_PIDFILE}" || :
+	fi
+}
+
+reload() {
+	local -i pid=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || return 1
+
+	ebegin "Reloading ${RC_SVCNAME} configuration and re-opening log files"
+	if [ -s "${SYSLOG_NG_PIDFILE}" ]; then
+		: $(( pid = $( cat "${SYSLOG_NG_PIDFILE}" ) ))
+	fi
+	if [ $(( pid )) -gt 1 ]; then
+		kill -HUP ${pid}
+	fi
+	eend ${?}
+}

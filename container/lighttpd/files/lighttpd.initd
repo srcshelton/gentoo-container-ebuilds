@@ -1,0 +1,454 @@
+#!/sbin/openrc-run
+# Copyright 1999-2016 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${LIGHTTPD_CONF:=/etc/lighttpd/lighttpd.conf}
+: ${LIGHTTPD_USER:=$(awk '/^server.username/{s=$3};{sub("\"","",s)};END{print s}' ${LIGHTTPD_CONF} 2>/dev/null)}
+: ${LIGHTTPD_GROUP:=$(awk '/^server.groupname/{s=$3};{sub("\"","",s)};END{print s}' ${LIGHTTPD_CONF} 2>/dev/null)}
+: ${LIGHTTPD_PID:=$(awk '/^server.pid-file/{s=$3};{sub("\"","",s)};END{print s}' ${LIGHTTPD_CONF} 2>/dev/null)}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+CONTENT_IMAGE='service.www-servers.web-content:latest'
+PHP_VER='7.4'
+PPN='php'
+PPV='7.4.11'
+PN="${RC_SVCNAME:=lighttpd}" # PN='lighttpd'
+PV='@PVR@'
+CATEGORY='www-servers'
+dockeropts=(
+	#--log-level debug
+
+	--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add FOWNER
+	#--cap-add NET_BIND_SERVICE
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--network host
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	##--publish 80:80/tcp
+	##--publish 443:443/tcp
+
+	--interactive
+	--name "openrc-${PN}-${PV}.web-server"
+	--restart on-failure
+	#--rm
+	--tty
+)
+dockermounts=(
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+	--mount type=bind,source=/var/run/php/,destination=/var/run/php/,ro=true
+
+	--mount type=bind,source=/etc/ssl/,destination=/etc/ssl/,ro=true
+
+	--mount type=bind,source=/etc/${PN},destination=/etc/${PN},ro=true
+	--mount type=bind,source=/etc/php/,destination=/etc/php/,ro=true
+
+	--mount type=bind,source=/var/lib/${PN},destination=/var/lib/${PN}
+
+	--mount type=bind,source=/var/log/${PN},destination=/var/log/${PN}
+	--mount type=bind,source=/var/log/php/,destination=/var/log/php/
+
+	--mount type=bind,source=/var/run/${PN},destination=/var/run/${PN}
+)
+if [ -d /var/www/localhost/htdocs ]; then
+	for webapp in /var/www/localhost/htdocs/*; do
+		[ "${webapp%/\*}" = "${webapp}" ] || continue
+		[ -d "${webapp}" ] || continue
+		for dir in "${webapp}"/*; do
+			[ "${dir%/\*}" = "${dir}" ] || continue
+			[ -d "${dir}" ] || continue
+			dockermounts+=(
+				--mount type=bind,source=${dir},destination=${dir}
+			)
+		done
+	done
+fi
+unset dir webapp
+dockervolumes=(
+	--volumes-from "openrc-${PN}-${PV}.web-content"
+)
+#dockerports=()
+#need_net_bind_service=1
+#for svc_port in $(
+#	cat /etc/lighttpd/lighttpd.conf /etc/lighttpd/sites/*.conf 2>/dev/null |
+#		sed 's/#.*$//' |
+#		grep -E 'server.port|\$SERVER\["socket"\]' |
+#		rev |
+#		cut -d'=' -f 1 |
+#		cut -d':' -f 1 |
+#		rev |
+#		cut -d'"' -f 1 |
+#		awk '{ print $1 }' |
+#		sort |
+#		uniq
+#); do
+#	#dockerports+=( --publish ${svc_port}:${svc_port}/tcp )
+#	if (( svc_port < 1024 )); then
+#		if (( need_net_bind_service )); then
+#			need_net_bind_service=0
+#			dockerports+=( --cap-add NET_BIND_SERVICE )
+#		fi
+#	fi
+#done
+#unset need_net_bind_service
+dockerports=()
+#dockerports+=( --cap-add NET_BIND_SERVICE )
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised lighttpd"
+command_args="--log-level=info run ${dockeropts[@]} ${dockermounts[@]} ${dockervolumes[@]} ${dockerports[@]} ${dockerimage} -f \"${LIGHTTPD_CONF}\" -D"
+command_background="true"
+#command_user="lighttpd:lighttpd"
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+pidfile="/var/run/containers/${PN}.pid"
+
+required_files="${LIGHTTPD_CONF}"
+
+extra_commands="checkconfig"
+extra_started_commands="reload clean graceful sync"
+extra_stopped_commands="inspect"
+description_checkconfig="validate configuration files"
+description_reload="cycle logfiles"
+description_clean="trigger DCC maintenance"
+description_graceful="gracefully restart"
+description_sync="trigger Roundcube sync processes"
+description_inspect="Launch container interactively"
+description="lighttpd is a lightweight high-performance web server"
+
+depend() {
+	need containers
+	use dns netmount ldap logger mysql php-fpm-php${PHP_VER} slapd spawn-fcgi
+	after famd sshd
+}
+
+checkconfig() {
+	if [ ! -f "${LIGHTTPD_CONF}" ] ; then
+		eerror "${LIGHTTPD_CONF} does not exist."
+		return 1
+	fi
+
+	if ! [ "${LIGHTTPD_USER:-}" = 'lighttpd' ]; then
+		eerror "server.username in '${LIGHTTPD_CONF}'"
+		eerror "must be equal to 'lighttpd'"
+		return 1
+	fi
+	if ! [ "${LIGHTTPD_GROUP:-}" = 'lighttpd' ]; then
+		eerror "server.groupname in '${LIGHTTPD_CONF}'"
+		eerror "must be equal to 'lighttpd'"
+		return 1
+	fi
+
+	lighttpd_pid="$(awk '/^server.pid-file/{s=$3};{sub("\"","",s)};END{print s}' ${LIGHTTPD_CONF} 2>/dev/null)"
+	if [ -z "${lighttpd_pid:-}" ] ; then
+		ewarn "server.pid-file variable in '${LIGHTTPD_CONF}'"
+		ewarn "is not set. Falling back to '${LIGHTTPD_PID}'"
+	fi
+
+	ebegin "Checking ${RC_SVCNAME} configuration"
+	if service_starting; then
+		docker run "${dockeropts[@]}" "${dockermounts[@]}" "${dockervolumes[@]}" "${dockerports[@]}" \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${PN}-${PV}-checkconfig" \
+				--replace \
+				--restart no \
+				--rm \
+			"${dockerimage}" -t -f "${LIGHTTPD_CONF}" >/dev/null 2>/dev/null
+	elif service_started; then
+		docker exec "openrc-${PN}-${PV}.web-server" \
+			lighttpd -tt -f "${LIGHTTPD_CONF}"
+	else
+		docker run "${dockeropts[@]}" "${dockermounts[@]}" "${dockerports[@]}" \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${PN}-${PV}-checkconfig" \
+				--replace \
+				--restart no \
+				--rm \
+			"${dockerimage}" -tt -f "${LIGHTTPD_CONF}" 
+	fi
+	eend ${?} "Configuration check failed: ${?}"
+}
+
+inspect() {
+	checkconfig || return 1
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	docker --log-level=info run --interactive "${dockeropts[@]}" "${dockermounts[@]}" "${dockervolumes[@]}" "${dockerports[@]}" \
+			--name "openrc-${PN}-${PV}-inspect" \
+			--replace \
+			--restart no \
+			--rm \
+			--entrypoint=/bin/sh \
+		"${dockerimage}"
+}
+
+start_pre() {
+	local git='' dir='/etc/lighttpd'
+	local -i rc=0
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		rc=1
+	fi
+	if ! docker image ls "${CONTENT_IMAGE%:*}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${CONTENT_IMAGE%:*}' not found"
+		rc=1
+	fi
+	if [ $(( rc )) -ne 0 ]; then
+		return ${rc}
+	fi
+
+
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0750 --owner lighttpd:lighttpd --quiet "/var/run/${PN}" || return 1
+	else
+		checkpath --directory-truncate --mode 0750 --owner lighttpd:lighttpd --quiet "/var/run/${PN}" || return 1
+	fi
+	checkpath --directory --mode 0775 --owner lighttpd:lighttpd --quiet "/var/log/${PN}" || return 1
+
+	checkconfig || return 1
+
+	if [ -n "${LIGHTTPD_USE_GIT:-}" ] && [ "${LIGHTTPD_USE_GIT}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+	if [ -d "${dir}/.git" ] && [ -n "${git:-}" ]; then
+		if ! [ -s "${dir}/.gitignore" ]; then
+			cat >> "${dir}/.gitignore" <<-EOF
+				**/._cfg[0-9][0-9][0-9][0-9]_*
+				**/.keep*
+				**/.*.swp
+			EOF
+		fi
+		pushd "${dir}/">/dev/null 2>&1 &&
+			git status 2>/dev/null | grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+			einfo "Committing configuration changes to git" &&
+			git add --all . >/dev/null 2>&1 &&
+			git status | tail -n +4 &&
+			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+		popd >/dev/null 2>&1
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}.web-server" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		veinfo "Attempting to remove old 'openrc-${PN}-${PV}.web-server' container '${id}' ..."
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	#id="$( docker ps -a --filter "name=openrc-${PN}-${PV}.web-content" --format '{{.ID}}' )"
+	#if [ -n "${id:-}" ]; then
+	#	veinfo "Attempting to remove old 'openrc-${PN}-${PV}.web-content' container '${id}' ..."
+	#	docker rm --volumes "${id}" >/dev/null 2>&1
+	#fi
+	unset id
+
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}.web-content" --format '{{.ID}}' )"
+	if [ -z "${id:-}" ]; then
+		ebegin "Generating web-content volumes from '${RC_SVCNAME}'"
+		docker run \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${PN}-${PV}.web-content" \
+				--replace \
+				--restart no \
+				--entrypoint=/bin/true \
+			"${CONTENT_IMAGE}"
+		eend ${?} "Launching container 'openrc-${PN}-${PV}.web-content' from image '${CONTENT_IMAGE}' via service '${RC_SVCNAME}' failed: ${?}" || return 1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${LIGHTTPD_PID}" ] && rm "${LIGHTTPD_PID}" || :
+}
+
+start_post() {
+	local -i wait=30 count=0 oldpid=0 pid=0 expect_pid=1 have_pid=0
+	local sleep='1' pid_file="${LIGHTTPD_PID}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}.web-server" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}.web-server" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}.web-server' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+reload() {
+	local -i pid=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || return 1
+
+	ebegin "Re-opening lighttpd log files"
+	#start-stop-daemon --signal HUP \
+	#	--quiet --pidfile "${LIGHTTPD_PID}"
+	if [ -s "${LIGHTTPD_PID}" ]; then
+		: $(( pid = $( cat "${LIGHTTPD_PID}" ) ))
+	fi
+	if [ $(( pid )) -gt 1 ]; then
+		kill -HUP ${pid}
+	fi
+	eend ${?}
+}
+
+clean() {
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	#docker run "${dockeropts[@]}" "${dockermounts[@]}" "${dockervolumes[@]}" "${dockerports[@]}" \
+	#		--name "openrc-${PN}-${PV}-dcc-clean" \
+	#		--replace \
+	#		--restart no \
+	#		--rm \
+	#		--entrypoint=/bin/sh \
+	#	"${dockerimage}" -c /etc/cron.daily/dccd
+	docker exec "openrc-${PN}-${PV}.web-server" /etc/cron.daily/dccd
+}
+
+graceful() {
+	local sleep='1'
+	local -i pid=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || return 1
+
+	ebegin "Gracefully stopping lighttpd"
+	#start-stop-daemon --quiet --pidfile "${LIGHTTPD_PID}" \
+	#	--signal INT
+	if [ -e "${LIGHTTPD_PID}" ]; then
+		: $(( pid = $( cat "${LIGHTTPD_PID}" ) ))
+	fi
+	if [ $(( pid )) -gt 1 ]; then
+		kill -INT ${pid}
+	fi
+	if eend ${?} ; then
+		#rm -f "${LIGHTTPD_PID}"
+
+		if sleep 0.1 >/dev/null 2>&1; then
+			sleep='0.1'
+			: $(( wait = wait * 10 ))
+		fi
+		while [ -e "${LIGHTTPD_PID}" ]; do
+			sleep ${sleep}
+		done
+
+		mark_service_stopped
+
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}.web-server" --format '{{.ID}}' )"
+		if [ -n "${id}" ]; then
+			veinfo "Attempting to remove old 'openrc-${PN}-${PV}.web-server' container '${id}' ..."
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+
+		start
+	fi
+}
+
+sync() {
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	#docker run "${dockeropts[@]}" "${dockermounts[@]}" "${dockervolumes[@]}" "${dockerports[@]}" \
+	#		--name "openrc-${PN}-${PV}-roundcube-sync" \
+	#		--replace \
+	#		--restart no \
+	#		--rm \
+	#		--entrypoint=/bin/sh \
+	#	"${dockerimage}" -c /usr/libexec/entrypoint.d/roundcube-sync.sh
+	docker exec "openrc-${PPN}-${PPV}" /usr/libexec/entrypoint.d/roundcube-sync.sh
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}.web-server" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}.web-server" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}.web-content" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+
+		[ -e "${LIGHTTPD_PID}" ] && rm "${LIGHTTPD_PID}" || :
+	fi
+}

@@ -1,0 +1,10 @@
+# /etc/conf.d/ntpd: config file for openntpd's ntpd
+
+# Check changes into a (pre-existing) git repo in /etc/openntpd?
+#OPENNTPD_USE_GIT=0
+
+# See ntpd(8) man page ... some popular options:
+#  -s   Set the time immediately at startup
+#       (Note: may cause up to a 15 second startup delay
+#        if ntp servers not reachable)
+NTPD_OPTS=""

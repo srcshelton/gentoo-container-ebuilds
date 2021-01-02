@@ -1,0 +1,250 @@
+#!/sbin/openrc-run
+# Copyright 1999-2014 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+conf="/etc/conf.d/postgrey"
+
+if [ -n "${POSTGREY_TYPE:-}" ]; then
+	if [ "${POSTGREY_TYPE}" = 'inet' ]; then
+		: ${POSTGREY_ADDR:=--${POSTGREY_TYPE}=${POSTGREY_HOST:-}:${POSTGREY_PORT:-}}
+	elif [ "${POSTGREY_TYPE}" = 'unix' ]; then
+		: ${POSTGREY_ADDR:=--${POSTGREY_TYPE}=${POSTGREY_SOCKET:-}}
+	fi
+fi
+: ${POSTGREY_PID:=/var/run/postgrey/postgrey.pid}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+	export -f docker
+fi
+
+PN="${RC_SVCNAME:=postgrey}" # PN='postgrey'
+PV='@PVR@'
+CATEGORY='mail-filter'
+#svc_port="${POSTGREY_PORT:-}"
+dockeropts=(
+	#--log-level debug
+	--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+
+	--mount type=bind,source=/etc/postfix/,destination=/etc/postfix/,ro=true
+
+	--mount type=bind,source=/var/spool/postfix/${PN}/,destination=/var/spool/postfix/${PN}
+	#--mount type=bind,source=/var/spool/postfix/private/,destination=/var/spool/postfix/private
+
+	--mount type=bind,source=/var/log/${PN},destination=/var/log/${PN}
+	--mount type=bind,source=/var/run/${PN},destination=/var/run/${PN}
+
+	--network host
+	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
+	##--publish 10030:10030/tcp
+	#${svc_port:+--publish ${svc_port}:${svc_port}/tcp}
+
+	--interactive
+	--name "openrc-${PN}-${PV}"
+	--restart on-failure
+	#--rm
+	--tty
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised postgrey"
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} ${POSTGREY_ADDR} --verbose \"--pidfile=${POSTGREY_PID}\" ${POSTGREY_DELAY:+--delay=${POSTGREY_DELAY}} ${POSTGREY_OPTS:-} ${POSTGREY_TEXT:+\"--greylist-text=${POSTGREY_TEXT}\"}"
+command_background="true"
+#command_user="postgrey:postgrey"
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+pidfile="/var/run/containers/${PN}.pid"
+
+#required_dirs=""
+
+extra_started_commands="reload"
+description="Postgrey is a Postfix policy server implementing greylisting"
+
+depend() {
+	need containers
+	before postfix
+	provide postfix_greylist
+}
+
+conf_error() {
+	eerror "You need to setup ${conf} first"
+	return 1
+}
+
+checkconfig() {
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	if [ -z "${POSTGREY_TYPE:-}" ]; then
+		einfo "You need to choose the server type you want"
+		einfo "by setting the POSTGREY_TYPE variable in ${conf}."
+	else
+		if [ "${POSTGREY_TYPE}" = "inet" ]; then
+			if [ -z "${POSTGREY_PORT}" ] || [ -z "${POSTGREY_HOST}" ]; then
+				einfo "The following entries are missing in ${conf}:"
+				[ -z "${POSTGREY_HOST}" ] && einfo "  - POSTGREY_HOST"
+				[ -z "${POSTGREY_PORT}" ] && einfo "  - POSTGREY_PORT"
+				conf_error
+			fi
+			POSTGREY_ADDR="${POSTGREY_TYPE}=${POSTGREY_HOST}:${POSTGREY_PORT}"
+		else
+			if [ -z "${POSTGREY_SOCKET}" ]; then
+				einfo "The following entries are missing in ${conf}:"
+				[ -z "${POSTGREY_SOCKET}" ] && einfo "  - POSTGREY_SOCKET"
+				conf_error
+			fi
+			POSTGREY_ADDR="${POSTGREY_TYPE}=${POSTGREY_SOCKET}"
+		fi
+	fi
+
+	if [ -z "${POSTGREY_PID:-}" ]; then
+		einfo "The following entries are missing in ${conf}:"
+		[ -z "${POSTGREY_PID:-}" ] && einfo "  - POSTGREY_PID"
+		conf_error
+	fi
+}
+
+start_pre() {
+	checkpath --directory --mode 0755 --owner root:root --quiet "$( dirname "${pidfile}" )" || return 1
+
+	if service_started || service_starting; then
+		checkpath --directory --mode 0755 --owner postgrey:postgrey --quiet "/var/run/${PN}" || return 1
+	else
+		checkpath --directory-truncate --mode 0755 --owner postgrey:postgrey --quiet "/var/run/${PN}" || return 1
+	fi
+	checkpath --directory --mode 0775 --owner root:postgrey --quiet "/var/log/${PN}" || return 1
+
+	checkpath --directory --mode 0755 --owner root:root --quiet /var/spool/postfix || return 1
+	checkpath --directory --mode 0700 --owner postfix:root --quiet /var/spool/postfix/private || return 1
+
+	checkconfig || return 1
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${POSTGREY_PID}" ] && rm "${POSTGREY_PID}" || :
+
+	[ "${POSTGREY_TYPE}" = "unix" ] && rm -f "${POSTGREY_SOCKET}" || :
+}
+
+start_post() {
+	local -ir expect_pid=0
+	local -i wait=5 count=0 oldpid=0 pid=0 have_pid=0
+	local sleep='1' pid_file="${POSTGREY_PID}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			if [ "$( type -t docker 2>dev/null )" = 'function' ]; then
+				: $(( pid = $( podman inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			else
+				: $(( pid = $( docker inspect --format '{{.State.Pid}}' "openrc-${PN}-${PV}" 2>/dev/null || echo '0' ) ))
+			fi
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+
+			if [ "${POSTGREY_TYPE}" = "unix" ]; then
+				: $(( count = 0 ))
+				while [ ! -S "${POSTGREY_SOCKET}" ] && [ $(( count )) -lt $(( wait )) ]; do
+					sleep ${sleep}
+					: $(( count = count + 1 ))
+				done
+				if ! [ -S "${POSTGREY_SOCKET}" ]; then
+					eerror "Unable to correct permissions on missing ${PN} socket '${POSTGREY_SOCKET}'"
+				else
+					chmod a+rw,a-x "${POSTGREY_SOCKET}"
+				fi
+			fi
+		fi
+	fi
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "${POSTGREY_PID:-}" ] && rm "${POSTGREY_PID}" || :
+		[ "${POSTGREY_TYPE:-}" = "unix" ] && rm -f "${POSTGREY_SOCKET}" || :
+	fi
+}
+
+reload() {
+	local -i pid=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || return 1
+
+	ebegin "Reloading ${RC_SVCNAME} configuration"
+	if [ -s "${POSTGREY_PID}" ]; then
+		: $(( pid = $( cat "${POSTGREY_PID}" ) ))
+	fi
+	if [ $(( pid )) -gt 1 ]; then
+		kill -HUP ${pid}
+	fi
+	eend ${?}
+}

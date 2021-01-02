@@ -1,0 +1,6 @@
+# user/group to run opendmarc daemon as
+OPENDMARC_USER=milter
+OPENDMARC_GROUP=milter
+
+# Check changes into a (pre-existing) git repo in /etc/opendmarc?
+#OPENDMARC_USE_GIT=0

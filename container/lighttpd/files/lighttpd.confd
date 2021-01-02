@@ -1,0 +1,11 @@
+# /etc/conf.d/lighttpd
+
+# Location of a shell used by the 'include_shell' directive
+# in the lighttpd's configuration file
+#export SHELL="/bin/bash"
+
+# Check changes into a (pre-existing) git repo in /etc/lighttpd?
+#LIGHTTPD_USE_GIT=0
+
+# Location of the lighttpd configuration file
+LIGHTTPD_CONF="/etc/lighttpd/lighttpd.conf"

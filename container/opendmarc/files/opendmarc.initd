@@ -1,0 +1,254 @@
+#!/sbin/openrc-run
+# Copyright 1999-2020 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+getconfval() {
+	val="${1:-}"
+
+	[ -n "${val:-}" ] || return 1
+
+	sed 's/#.*$//' "${CONFFILE}" | grep "^[[:space:]]*${val}[[:space:]]" | awk '{ print $2 }' | tail -n 1
+	#pidfile="$( sed -ne 's/^[[:space:]]*PidFile[[:space:]]\+//p' "${CONFFILE}" )"
+}
+
+PN="${RC_SVCNAME:=opendmarc}" # PN='opendmarc'
+PV='@PVR@'
+CATEGORY='mail-filter'
+
+: ${CONFFILE:=/etc/opendmarc/${RC_SVCNAME}.conf}
+: ${OPENDMARC_BASEDIR:=$(getconfval BaseDirectory)}
+: ${OPENDMARC_SOCKET_TYPE:=$(getconfval Socket | cut -d':' -f 1)}
+: ${OPENDMARC_SOCKET:=${OPENDMARC_SOCKET_TYPE}:${OPENDMARC_BASEDIR:+${OPENDMARC_BASEDIR}}/$(getconfval Socket | cut -d':' -f 2-)}
+: ${OPENDMARC_PIDFILE:=${OPENDMARC_BASEDIR:+${OPENDMARC_BASEDIR}}/$(getconfval PidFile)}
+: ${OPENDMARC_SOCKET:=local:/var/run/${PN}/${RC_SVCNAME}.sock}
+: ${OPENDMARC_PIDFILE:=/var/run/${PN}/${RC_SVCNAME}.pid}
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() { [ "${1:-}" = 'rm' ] && trap '' INT ; podman ${@+"${@}"} ; trap  - INT ; }
+fi
+
+dockeropts=(
+	#--log-level debug
+	--cap-drop ALL
+	--cap-add DAC_OVERRIDE
+	--cap-add SETGID
+	--cap-add SETUID
+	--interactive
+	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
+	--mount type=bind,source=/etc/${PN}/,destination=/etc/${PN}/,ro=true
+	#--mount type=bind,source=/var/lib/${PN}/,destination=/var/lib/${PN}
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/log/${PN}
+	--mount type=bind,source=/var/run/${PN}/,destination=/var/run/${PN}
+	--name "openrc-${PN}-${PV}"
+
+	--network host
+
+	--restart on-failure
+	#--rm
+	--tty
+)
+dockerimage="service.${CATEGORY}.${PN}:${PV}"
+
+name="containerised ${PN}"
+command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} -c ${CONFFILE}"
+command_background='true'
+#command_user='milter:milter'
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log"
+pidfile="/var/run/containers/${RC_SVCNAME}.pid"
+
+extra_commands="checkconfig"
+
+description_checkconfig="Validate configuration"
+description_stats="Output statistics"
+description="A milter providing DKIM signing and verification"
+
+required_files="${CONFFILE}"
+
+depend() {
+	need containers
+	use dns logger net
+	before mta
+}
+
+checkconfig() {
+	local -i rc=0
+
+	if [ ! -f "${CONFFILE}" ] ; then
+		eerror "Configuration file ${CONFFILE} is missing"
+		return 1
+	fi
+
+	if [ -z "${OPENDMARC_PIDFILE}" ] ; then
+		eerror "Configuration file needs PidFile setting - recommend adding 'PidFile /var/run/opendmarc/${RC_SVCNAME}.pid' to ${CONFFILE}"
+		return 1
+	fi
+	if [ 'true' = "$(getconfval Background)" ]; then
+		eerror "${RC_SVCNAME} service cannot run with Background key set to true!"
+		return 1
+	fi
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	checkpath --directory --mode 0750 --owner "${OPENDMARC_USER}:${OPENDMARC_GROUP}" --quiet /var/run/opendmarc || return 1
+
+	checkpath --directory --mode 0755 --owner "${OPENDMARC_USER}:${OPENDMARC_GROUP}" --quiet /var/log/opendmarc || return 1
+
+	checkpath --directory --mode 0750 --owner "${OPENDMARC_USER}:${OPENDMARC_GROUP}" --quiet "$( dirname "${OPENDMARC_PIDFILE}" )" || return 1
+
+	if [ 'local' = "${OPENDMARC_SOCKET_TYPE}" ]; then
+		OPENDMARC_SOCKET_DIR="$( dirname "${OPENDMARC_BASEDIR:+${OPENDMARC_BASEDIR}}/$( getconfval Socket | cut -d':' -f 2- )" )"
+		checkpath --directory --mode 0750 --owner "${OPENDMARC_USER}:${OPENDMARC_GROUP}" --quiet "${OPENDMARC_SOCKET_DIR}" || return 1
+	fi
+
+	ebegin "Checking configuration in '${CONFFILE}'"
+        if service_started; then  
+                docker exec "openrc-${PN}-${PV}" \
+                        opendmarc -c "${CONFFILE}" -n || rc=${?}
+        else
+		docker run "${dockeropts[@]}" \
+				--cap-drop ALL \
+				--network none \
+				--name "openrc-${PN}-${PV}-checkconfig" \
+				--replace \
+				--restart no \
+				--rm \
+			"${dockerimage}" -c "${CONFFILE}" -n || rc=${?}
+	fi
+	eend ${rc} "${RC_SVCNAME} configuration check failed"
+	return ${rc}
+}
+
+start_pre() {
+	local git='' dir='/etc/opendmarc'
+
+	# If this isn't a restart, make sure that the user's config isn't
+	# busted before we try to start the daemon (this will produce
+	# better error messages than if we just try to start it blindly).
+	#
+	# If, on the other hand, this *is* a restart, then the stop_pre
+	# action will have ensured that the config is usable and we don't
+	# need to do that again.
+	if [ "${RC_CMD}" != "restart" ]; then
+		checkconfig || return $?
+	fi
+
+	if [ -n "${OPENDMARC_USE_GIT:-}" ] && [ "${OPENDMARC_USE_GIT}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+	if [ -d "${dir}/.git" ] && [ -n "${git:-}" ]; then
+		if ! [ -s "${dir}/.gitignore" ]; then
+			cat >> "${dir}/.gitignore" <<-EOF
+				**/._cfg[0-9][0-9][0-9][0-9]_*
+				**/.keep*
+				**/.*.swp
+			EOF
+		fi
+		pushd "${dir}/">/dev/null 2>&1 &&
+			git status 2>/dev/null | grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+			einfo "Committing configuration changes to git" &&
+			git add --all . >/dev/null 2>&1 &&
+			git status | tail -n +4 &&
+			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+		popd >/dev/null 2>&1
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	if [ "${OPENDMARC_SOCKET#local:}" != "${OPENDMARC_SOCKET}" ] && [ -S "${OPENDMARC_SOCKET}" ] && ! fuser -s "${OPENDMARC_SOCKET}"; then
+		# Remove stalled Unix socket if no other process is
+		# using it
+		if ! rm "${UNIX_SOCKET}"; then
+			eend 2 "failed to remove stale unix socket ${OPENDMARC_SOCKET}"
+		fi
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	[ -e "${OPENDMARC_PIDFILE}" ] && rm "${OPENDMARC_PIDFILE}" || :
+}
+
+start_post() {
+	local -i wait=5 count=0 oldpid=0 pid=0 expect_pid=0 have_pid=0
+	local sleep='1' pid_file="${OPENDMARC_PIDFILE}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( pid = $( docker inspect -f '{{.State.Pid}}' "openrc-${PN}-${PV}" ) ))
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container 'openrc-${PN}-${PV}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				oldpid="$( cat "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+}
+
+stop_pre() {
+	# If this is a restart, check to make sure the user's config
+	# isn't busted before we stop the running daemon.
+	if [ "${RC_CMD}" = "restart" ]; then
+		checkconfig || return ${?}
+	fi
+}
+
+stop_post() {
+	local id=''
+
+	id="$( docker ps --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=openrc-${PN}-${PV}" --format '{{.ID}}' )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		[ -e "${OPENDMARC_PIDFILE}" ] && rm "${OPENDMARC_PIDFILE}" || :
+	fi
+}

@@ -1,0 +1,29 @@
+/var/log/php-fpm*.log /var/log/php-fpm-*.log.slow {
+	#create 600 root root
+	#size 5M
+	#copytruncate
+	#notifempty
+	#missingok
+
+	su root root
+	daily
+	missingok
+	nocreate
+	copytruncate
+	rotate 7
+	compress
+	notifempty
+	dateext
+}
+
+/var/log/php/*/*.log /var/log/php/*/*.txt {
+	su root root
+	daily
+	missingok
+	nocreate
+	copytruncate
+	rotate 7
+	compress
+	notifempty
+	dateext
+}

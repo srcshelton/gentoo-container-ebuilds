@@ -1,0 +1,6 @@
+# /etc/conf.d/zxtm: config for /etc/init.d/zxtm
+
+ZEUSHOME="/opt/zxtm"
+
+# Check changes into a (pre-existing) git repo in /etc/zeus?
+#ZXTM_USE_GIT=0

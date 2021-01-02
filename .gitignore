@@ -1,0 +1,6 @@
+.*.swp
+*.swp
+*~
+
+*/*/.ignore-new
+metadata/md5-cache/*
