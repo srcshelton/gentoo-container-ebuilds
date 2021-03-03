@@ -1,0 +1,54 @@
+#!/sbin/openrc-run
+# Copyright 1999-2017 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License, v2 or later
+
+: ${IRQBALANCE_PIDFILE:=/var/run/${RC_SVCNAME}/${RC_SVCNAME}.pid}
+
+podman_memory_size='tiny'
+
+PN="${RC_SVCNAME:=irqbalance}" # PN='irqbalance'
+PV='@PVR@'
+CATEGORY='sys-apps'
+container_svc_pid="${IRQBALANCE_PIDFILE}"
+command_opts="--foreground --pid=%PID% ${IRQBALANCE_OPTS:-}" # --debug
+
+container_use_pid=0
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+
+	--network none
+)
+
+dockermounts=( ${dockermount_run} )
+
+_containers_set_args
+
+description="Distribute hardware interrupts across processors on a multiprocessor system"
+
+
+depend() {
+	after bootmisc
+	need containers
+}
+
+start_pre() {
+	container_dir_run="$( dirname "${IRQBALANCE_PIDFILE}" )"
+	unset container_use_git
+
+	if grep -q MSI /proc/interrupts 2>/dev/null && [ -z "$(
+		find /sys/devices/ -type d -name msi_irqs 2>/dev/null
+	)" ]; then
+		eerror "MSI interrupts found in /proc/interrupts but none found in sysfs."
+		eerror "You need to update your kernel."
+		return 1
+	fi
+
+	_containers_check_paths || return ${?}
+
+	_containers_start_pre || return ${?}
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
