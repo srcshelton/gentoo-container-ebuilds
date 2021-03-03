@@ -32,7 +32,7 @@ UNIFI_OPTS=(
 podman_memory_size='large'
 
 PN='unifi' # PN="${RC_SVCNAME:=unifi}"
-PV='@PVR@'
+PV='6.0.45'
 CATEGORY='net-misc'
 command_opts="${JVM_OPTS[@]:-} ${UNIFI_OPTS[@]:-} -cp ${jar} ${class} start"
 
@@ -102,7 +102,7 @@ inspect() {
 }
 
 start_pre() {
-	local id='' dr_id=''
+	local id='' dr_id='' key='' chain=''
 	local -i update=0 rc=0 rcc=0
 
 	_containers_check_paths || return ${?}
@@ -115,6 +115,12 @@ start_pre() {
 		if ! command -v openssl >/dev/null 2>&1; then
 			eerror "Cannot execute 'openssl' - not updating SSL" \
 				"certificate"
+		elif ! [ -s "${PRIVATE_KEY:-}" ]; then
+			eerror "Cannot read private key '${PRIVATE_KEY:-}' -" \
+				"not updating SSL certificate"
+		elif ! [ -s "${CA_CHAIN:-}" ]; then
+			eerror "Cannot read CA chain '${CA_CHAIN:-}' - not" \
+				"updating SSL certificate"
 		elif
 			echo "${PRIVATE_KEY:-}" |
 			grep -q '^/var/lib/unifi/certs/'
@@ -122,14 +128,16 @@ start_pre() {
 			error "Private key must exist outside of" \
 				"'/var/lib/unifi/certs/' - not updating SSL" \
 				"certificate"
-		elif ! [ -s "${PRIVATE_KEY:-}" ]; then
-			eerror "Cannot read private key '${PRIVATE_KEY:-}' -" \
-				"not updating SSL certificate"
-		elif ! [ -s "${CA_CHAIN:-}" ]; then
-			eerror "Cannot read CA chain '${CA_CHAIN:-}' - not" \
-				"updating SSL certificate"
+		elif
+			echo "${CA_CHAIN:-}" |
+			grep -q '^/var/lib/unifi/certs/'
+		then
+			error "CA Chain must exist outside of" \
+				"'/var/lib/unifi/certs/' - not updating SSL" \
+				"certificate"
 		else
 			key="$( basename "${PRIVATE_KEY}" )"
+			chain="$( basename "${CA_CHAIN}" )"
 			update=1
 			if ! cp "${PRIVATE_KEY}" "/var/lib/unifi/certs/${key}"
 			then
@@ -137,12 +145,22 @@ start_pre() {
 					"'${PRIVATE_KEY}' to" \
 					"'/var/lib/unifi/certs/': ${?}"
 				update=0
+			elif ! cp "${CA_CHAIN}" "/var/lib/unifi/certs/${chain}"
+			then
+				eerror "Failed to copy CA Chain" \
+					"'${CA_CHAIN}' to" \
+					"'/var/lib/unifi/certs/': ${?}"
+				update=0
 			elif
 				[ -s "/var/lib/unifi/certs/${key}" ] &&
-				[ -s "/var/lib/unifi/certs/${key}.md5" ]
+				[ -s "/var/lib/unifi/certs/${key}.md5" ] &&
+				[ -s "/var/lib/unifi/certs/${chain}" ] &&
+				[ -s "/var/lib/unifi/certs/${chain}.md5" ]
 			then
 				if
 					md5sum -c "/var/lib/unifi/certs/${key}.md5" \
+					>/dev/null 2>&1 &&
+					md5sum -c "/var/lib/unifi/certs/${chain}.md5" \
 					>/dev/null 2>&1
 				then
 					einfo "SSL certificate unchanged -" \
@@ -154,11 +172,13 @@ start_pre() {
 		if (( update )); then
 			local ALIAS='unifi'
 			local PASSWORD='aircontrolenterprise'
+			local PKCS12=''
+			local -a openssl_args=()
 
 			einfo "Updating ${RC_SVCNAME} certificate ..."
 
 			#cp "${PRIVATE_KEY}" /var/lib/unifi/certs/
-			cp "${CA_CHAIN}" /var/lib/unifi/certs/
+			#cp "${CA_CHAIN}" /var/lib/unifi/certs/
 
 			if [ -s /var/lib/unifi/data/keystore ]; then
 				suffix="$( date +'%s' )"
@@ -180,7 +200,7 @@ start_pre() {
 			chown unifi:unifi "${PKCS12}" \
 				/var/lib/unifi/data/keystore
 
-			local -a openssl_args=(
+			openssl_args=(
 				pkcs12
 				-export
 				-in "${CA_CHAIN}"
@@ -283,6 +303,8 @@ start_pre() {
 			else
 				md5sum "/var/lib/unifi/certs/${key}" > \
 					"/var/lib/unifi/certs/${key}.md5"
+				md5sum "/var/lib/unifi/certs/${chain}" > \
+					"/var/lib/unifi/certs/${chain}.md5"
 			fi
 			rm "${PKCS12}"
 			unset PKCS12
