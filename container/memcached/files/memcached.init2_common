@@ -1,0 +1,94 @@
+#!/sbin/openrc-run
+# Copyright 1999-2021 Gentoo Authors
+# Distributed under the terms of the GNU General Public License, v2 or later
+
+: ${CONF:=${RC_SVCNAME#*.}}
+: ${CONFBASE:=/etc/conf.d/memcached}
+: ${MEMUSAGE:=64}
+: ${MAXCONN:=1024}
+: ${MEMCACHED_RUNAS:=memcached}
+: ${PIDFILE:=/var/run/${PN}/${RC_SVCNAME}}
+
+[ -z "${PIDBASE:-}" ] && PIDBASE="/var/run/memcached/memcached"
+[ "${CONF}" = "memcached" ] && CONF=''
+
+if [ -n "${CONF:-}" ]; then
+	PIDFILE="${PIDBASE}.${CONF}.pid"
+	CONFSRC="${CONFBASE}.${CONF}"
+	if [ -f "${CONFSRC}" ]; then
+		. "${CONFSRC}"
+	else
+		eerror "The configuration file ${CONFSRC} was not found!"
+	fi
+else
+	PIDFILE="${PIDBASE}.pid"
+	CONFSRC="${CONFBASE}"
+fi
+
+podman_memory_size='medium'
+
+PN="${RC_SVCNAME:=memcached}" # PN='memcached'
+PV='@PVR@'
+CATEGORY='net-misc'
+container_svc_pid="${PIDFILE}"
+command_opts="$( echo "${SOCKET:--p ${PORT} -U ${UDPPORT}${LISTENON:+ -l ${LISTENON}}}" \
+	"${SOCKET:+-s ${SOCKET}${SOCKET_MARK:+ -a ${SCOCKET_MASK}}}" \
+	"-m ${MEMUSAGE} -c ${MAXCONN} -u ${MEMCACHED_RUNAS}" \
+	"-P '%PID%' ${MISC_OPTS}" )"
+
+container_use_pid=0
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--network host
+	#--publish 11211:11211/tcp
+	#--publish 11211:11211/udp
+)
+
+dockermounts=(
+	${dockermount_syslog}
+	${dockermount_run}
+)
+
+dockervolumes=( ${dockervolumes_hugetlb} )
+
+_containers_set_args
+
+name="containerised memcached${CONF:+ (${CONF})}"
+#command_user="root:root"
+
+description="High-performance, distributed memory object caching system"
+
+
+depend() {
+	# per bug #269022, accurate time is important for memcached!
+	# We include the full list of ways it might be set on boot.
+	after ntp-client ntpd rdate openrdate adjtimex hwclock
+	need containers
+}
+
+checkconfig() {
+	if [ -z "${LISTENON:-}" ] && [ -z "${SOCKET:-}" ]; then
+		ewarn "You should edit '${CONFSRC:-}' and specify an address or socket to listen on."
+		ewarn "Listening on any address (check your firewall!)"
+	fi
+}
+
+start_pre() {
+	unset container_dir_run
+
+	_containers_check_paths || return ${?}
+
+	checkpath --directory --mode 0755 --owner ${MEMCACHED_RUNAS}:memcached --quiet "$( dirname "${PIDFILE}" )" || return 1
+
+	checkconfig
+
+	_containers_start_pre
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:

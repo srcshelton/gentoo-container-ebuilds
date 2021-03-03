@@ -19,6 +19,7 @@ SLOT="0"
 
 RDEPEND="
 	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts
 	acct-group/memcached
 	acct-user/memcached"
 
@@ -27,7 +28,7 @@ S="${WORKDIR}"
 src_prepare() {
 	local f
 
-	for f in memcached.init2; do
+	for f in memcached.init2_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -38,7 +39,7 @@ src_prepare() {
 
 src_install() {
 	newconfd "${FILESDIR}/memcached.confd" memcached
-	newinitd "${T}/memcached.init2" memcached
+	newinitd "${T}/memcached.init2_common" memcached
 }
 
 pkg_postinst() {
