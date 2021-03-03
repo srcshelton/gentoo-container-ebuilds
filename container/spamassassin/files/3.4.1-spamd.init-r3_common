@@ -1,0 +1,201 @@
+#!/sbin/openrc-run
+# Copyright 1999-2017 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${SPAMD_NICELEVEL:=0}
+: ${SPAMD_TIMEOUT:=20}
+if [ -n "${SPAMD_PIDFILE:-}" ]; then
+	: ${SPAMD_PIDDIR:=$(dirname "${SPAMD_PIDFILE}")}
+else
+	: ${SPAMD_PIDDIR:=/var/run/${RC_SVCNAME}}
+fi
+: ${SPAMD_PIDFILE:=${SPAMD_PIDDIR}/spamd.pid}
+
+podman_memory_size='small'
+
+PN='spamassassin' # PN="${RC_SVCNAME:=spamd}"
+PV='@PVR@'
+CATEGORY='mail-filter'
+container_svc_pid="${SPAMD_PIDFILE}"
+command_opts="\"--pidfile=%PID%\" ${SPAMD_OPTS}"
+
+container_dir_owner='spamd'
+container_dir_run="/var/run/${RC_SVCNAME}"
+container_dir_log="/var/log/${RC_SVCNAME}"
+container_dir_etc='/etc/mail/spamassassin'
+container_use_git="${SPAMD_USE_GIT:-}"
+
+container_svc_wait=90
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add NET_BIND_SERVICE
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--network host
+	#--publish 783:783/tcp
+)
+
+dockermounts=(
+	${dockermount_syslog}
+	--mount type=bind,source=/var/run/mysqld/,destination=/var/run/mysqld/,ro=true
+
+	--mount type=bind,source=/etc/GeoIP.conf,destination=/etc/GeoIP.conf,ro=true
+	--mount type=bind,source=/var/lib/geoip/,destination=/usr/share/GeoIP/,ro=true
+
+	--mount type=bind,source=/etc/mail/${PN}/,destination=/etc/mail/${PN}/
+	--mount type=bind,source=/etc/mail/${PN}/,destination=/etc/${PN}/
+
+	#--mount type=bind,source=/usr/share/${PN}/,destination=/usr/share/${PN}/,ro=true
+	${dockermount_lib}
+	--mount type=bind,source=/var/log/${RC_SVCNAME}/,destination=/var/log/${RC_SVCNAME}/
+	--mount type=bind,source=/var/run/${RC_SVCNAME}/,destination=/var/run/${RC_SVCNAME}/
+
+	--mount type=bind,source=/etc/passwd,destination=/etc/passwd,ro=true
+	--mount type=bind,source=/etc/group,destination=/etc/group,ro=true
+	--mount type=bind,source=/etc/shadow,destination=/etc/shadow,ro=true
+	--mount type=bind,source=/etc/gshadow,destination=/etc/gshadow,ro=true
+
+	--mount type=bind,source=/root/,destination=/root/
+	--mount type=bind,source=/home/,destination=/home/
+	--mount type=bind,source=/storage/mail/,destination=/storage/mail/
+)
+
+_containers_set_args
+
+#command_args_background="--daemonize"
+#command_user="mail:mail"
+start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait-1000}" \
+	"--stdout /var/log/${RC_SVCNAME}/${command}-${PNV:-${RC_SVCNAME}}.log" \
+	"--stderr /var/log/${RC_SVCNAME}/${command}-${PNV:-${RC_SVCNAME}}.log" \
+	"--nicelevel ${SPAMD_NICELEVEL}" )"
+# Retry after SPAMD_TIMEOUT seconds because spamd can take a
+# while to kill off all of its children. This was bug 322025.
+retry="${SPAMD_TIMEOUT}"
+command_progress='true'
+
+if [ "${SPAMD_RUN_AS_ROOT:-}" != 'true' ]; then
+	# Passing --username=root to spamd kills it, so if SPAMD_RUN_AS_ROOT
+	# is true, then we want to pass no user/group command args at all.
+	# Any value other than "true" gets the default user/group of "spamd".
+	command_args="${command_args} --username=spamd --groupname=spamd"
+fi
+
+#required_dirs="${SPAMD_PIDDIR}"
+
+description="An extensible mail filter which can identify and tag spam"
+extra_stopped_commands="forceupdate inspect update"
+extra_started_commands="reload clean"
+description_forceupdate="Download and force compilation of spamassassin and geoip updates"
+description_inspect="Launch container interactively"
+description_update="Download and compile spamassassin and geoip updates"
+description_reload="Restart and e-read configuration files"
+description_clean="run DCC maintenance"
+
+
+depend() {
+	need containers
+	use logger mysql postgresql
+	before mta
+}
+
+update() {
+	local PPN='' PPV='' dockerimage='' force="${1:-}" # CATEGORY
+	local -a dockeropts=()
+
+	PPN="${PN}-update"
+	PPV="${PV}"
+	#CATEGORY='mail-filter'
+	dockeropts=(
+		#--log-level debug
+
+		--cap-drop ALL
+		--cap-add SETGID
+		--cap-add SETUID
+
+		# Tiny
+		#: ${PODMAN_MEMORY_RESERVATION:=256m}
+		#: ${PODMAN_MEMORY_LIMIT:=512m}
+		#: ${PODMAN_SWAP_LIMIT:=1g}
+		--memory-reservation 256m
+		--memory 512m
+		--memory-swap 1g
+
+		${dockermount_syslog}
+		--mount type=bind,source=/etc/GeoIP.conf,destination=/etc/GeoIP.conf,ro=true
+		--mount type=bind,source=/var/lib/geoip/,destination=/usr/share/GeoIP
+		--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/mail/spamassassin
+		--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/spamassassin
+		#--mount type=bind,source=/usr/share/spamassassin/,destination=/usr/share/spamassassin # Unused
+		--mount type=bind,source=/var/lib/spamassassin/,destination=/var/lib/spamassassin
+		${force:+--mount type=bind,source=/dev/null,destination=/.force-update,ro=true}
+		#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.d/sa-update,destination=/usr/libexec/entrypoint.d/sa-update,ro=true
+
+		--network host
+
+		#--interactive
+		--name "openrc-${PPN}-${PPV}"
+		--rm
+		--tty
+	)
+	dockerimage="service.${CATEGORY}.${PPN}:${PPV}"
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	local id=''
+	local -i rc=0
+	id="$( docker ps -a \
+		--filter "name=openrc-${PPN}-${PPV}-update" \
+		--format '{{.ID}}'
+	)"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+	if [ -z "${force:-}" ]; then
+		einfo "Updating spamassassin data ..."
+	else
+		einfo "Force-updating spamassassin data ..."
+	fi
+	docker run "${dockeropts[@]}" \
+			--name "openrc-${PPN}-${PPV}-update" \
+			--replace \
+			--restart no \
+			--rm \
+		"${dockerimage}" || rc=${?}
+
+	return ${rc}
+}
+
+forceupdate() {
+	update force
+}
+
+inspect() {
+	_containers_inspect
+}
+
+reload() {
+	container_change_pid=1
+
+	_containers_reload
+}
+
+clean() {
+	if ! service_started "${RC_SVCNAME}" ; then
+		eerror "${RC_SVCNAME} isn't running"
+		return 1
+	fi
+
+	docker exec "openrc-${PN}-${PV}" \
+		sh -c /etc/cron.daily/dccd
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:

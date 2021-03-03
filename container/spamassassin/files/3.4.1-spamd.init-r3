@@ -2,6 +2,27 @@
 # Copyright 1999-2017 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
+# Tiny
+#: ${PODMAN_MEMORY_RESERVATION:=256m}
+#: ${PODMAN_MEMORY_LIMIT:=512m}
+#: ${PODMAN_SWAP_LIMIT:=1g}
+# Small
+: ${PODMAN_MEMORY_RESERVATION:=512m}
+: ${PODMAN_MEMORY_LIMIT:=1g}
+: ${PODMAN_SWAP_LIMIT:=2g}
+# Medium
+#: ${PODMAN_MEMORY_RESERVATION:=1g}
+#: ${PODMAN_MEMORY_LIMIT:=2g}
+#: ${PODMAN_SWAP_LIMIT:=4g}
+# Large
+#: ${PODMAN_MEMORY_RESERVATION:=2g}
+#: ${PODMAN_MEMORY_LIMIT:=4g}
+#: ${PODMAN_SWAP_LIMIT:=8g}
+# Extra-Large
+#: ${PODMAN_MEMORY_RESERVATION:=4g}
+#: ${PODMAN_MEMORY_LIMIT:=8g}
+#: ${PODMAN_SWAP_LIMIT:=16g}
+
 : ${SPAMD_NICELEVEL:=0}
 : ${SPAMD_TIMEOUT:=20}
 if [ -n "${SPAMD_PIDFILE:-}" ]; then
@@ -23,12 +44,17 @@ PV='@PVR@'
 CATEGORY='mail-filter'
 dockeropts=(
 	#--log-level debug
+
 	--cap-drop ALL
 	--cap-add NET_BIND_SERVICE
 	--cap-add CHOWN
 	--cap-add DAC_OVERRIDE
 	--cap-add SETGID
 	--cap-add SETUID
+
+	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
 
 	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
 	--mount type=bind,source=/var/run/mysqld/,destination=/var/run/mysqld/,ro=true
@@ -56,6 +82,7 @@ dockeropts=(
 	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
 	#--publish 783:783/tcp
 
+	--init
 	--interactive
 	--name "openrc-${PN}-${PV}"
 	--restart on-failure
@@ -69,7 +96,7 @@ command_args="--log-level=info run ${dockeropts[@]} ${dockerimage} \"--pidfile=$
 command_background="true"
 #command_args_background="--daemonize"
 #command_user="mail:mail"
-start_stop_daemon_args="--wait 1000 --stdout /var/log/${PN}/${command}-${RC_SVCNAME}.log --stderr /var/log/${PN}/${command}-${RC_SVCNAME}.log --nicelevel ${SPAMD_NICELEVEL}"
+start_stop_daemon_args="--wait 1000 --stdout /var/log/${RC_SVCNAME}/${command}-${RC_SVCNAME}.log --stderr /var/log/${RC_SVCNAME}/${command}-${RC_SVCNAME}.log --nicelevel ${SPAMD_NICELEVEL}"
 pidfile="/var/run/containers/${RC_SVCNAME}.pid"
 # Retry after SPAMD_TIMEOUT seconds because spamd can take a
 # while to kill off all of its children. This was bug 322025.
@@ -77,16 +104,17 @@ retry="${SPAMD_TIMEOUT}"
 command_progress='true'
 
 if [ "${SPAMD_RUN_AS_ROOT:-}" != 'true' ]; then
-    # Passing --username=root to spamd kills it, so if SPAMD_RUN_AS_ROOT
-    # is true, then we want to pass no user/group command args at all.
-    # Any value other than "true" gets the default user/group of "spamd".
-    command_args="${command_args} --username=spamd --groupname=spamd"
+	# Passing --username=root to spamd kills it, so if SPAMD_RUN_AS_ROOT
+	# is true, then we want to pass no user/group command args at all.
+	# Any value other than "true" gets the default user/group of "spamd".
+	command_args="${command_args} --username=spamd --groupname=spamd"
 fi
 
 #required_dirs="${SPAMD_PIDDIR}"
 
-extra_stopped_commands="inspect update"
+extra_stopped_commands="forceupdate inspect update"
 extra_started_commands="reload clean"
+description_forceupdate="Download and force compilation of spamassassin and geoip updates"
 description_inspect="Launch container interactively"
 description_update="Download and compile spamassassin and geoip updates"
 description_reload="Re-read configuration files. Running processes terminate at their earliest convenience."
@@ -94,14 +122,14 @@ description_clean="run DCC maintenance"
 description="An extensible mail filter which can identify and tag spam"
 
 depend() {
-    need containers
-    use logger mysql postgresql
-    before mta
+	need containers
+	use logger mysql postgresql
+	before mta
 }
 
 update() {
-	#local PN PV CATEGORY dockerimage
-	local PN dockerimage
+	#local PN='' PV='' CATEGORY='' dockerimage=''
+	local PN='' dockerimage='' force="${1:-}"
 	local -a dockeropts=()
 
 	PN='spamassassin-update'
@@ -109,10 +137,19 @@ update() {
 	#CATEGORY='mail-filter'
 	dockeropts=(
 		#--log-level debug
+
 		--cap-drop ALL
 		--cap-add SETGID
 		--cap-add SETUID
-		--interactive
+
+		# Tiny
+		#: ${PODMAN_MEMORY_RESERVATION:=256m}
+		#: ${PODMAN_MEMORY_LIMIT:=512m}
+		#: ${PODMAN_SWAP_LIMIT:=1g}
+		--memory-reservation 256m
+		--memory 512m
+		--memory-swap 1g
+
 		--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
 		--mount type=bind,source=/etc/GeoIP.conf,destination=/etc/GeoIP.conf,ro=true
 		--mount type=bind,source=/var/lib/geoip/,destination=/usr/share/GeoIP
@@ -120,11 +157,13 @@ update() {
 		--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/spamassassin
 		#--mount type=bind,source=/usr/share/spamassassin/,destination=/usr/share/spamassassin # Unused
 		--mount type=bind,source=/var/lib/spamassassin/,destination=/var/lib/spamassassin
-		#--mount type=bind,source=/dev/null,destination=/.force-update
-		--name "openrc-${PN}-${PV}"
+		${force:+--mount type=bind,source=/dev/null,destination=/.force-update,ro=true}
+		#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.d/sa-update,destination=/usr/libexec/entrypoint.d/sa-update,ro=true
 
 		--network host
 
+		--interactive
+		--name "openrc-${PN}-${PV}"
 		--rm
 		--tty
 	)
@@ -141,7 +180,11 @@ update() {
 	if [ -n "${id:-}" ]; then
 		docker rm --volumes "${id}" >/dev/null 2>&1
 	fi
-	einfo "Updating spamassassin data ..."
+	if [ -z "${force:-}" ]; then
+		einfo "Updating spamassassin data ..."
+	else
+		einfo "Force-updating spamassassin data ..."
+	fi
 	docker run "${dockeropts[@]}" \
 			--name "openrc-${PN}-${PV}-update" \
 			--replace \
@@ -150,6 +193,10 @@ update() {
 		"${dockerimage}" || rc=${?}
 
 	return ${rc}
+}
+
+forceupdate() {
+	update force
 }
 
 inspect() {
