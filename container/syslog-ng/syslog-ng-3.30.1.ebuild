@@ -1,4 +1,4 @@
-# Copyright 1999-2020 Gentoo Authors
+# Copyright 1999-2021 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
@@ -10,13 +10,15 @@ HOMEPAGE="https://syslog-ng.com/open-source-log-management"
 
 LICENSE="GPL-2+ LGPL-2.1+"
 SLOT="0"
-KEYWORDS="~alpha amd64 ~arm ~arm64 ~hppa ~ia64 ~mips ~ppc ~ppc64 ~riscv ~s390 ~sparc ~x86"
+KEYWORDS="~alpha amd64 ~arm ~arm64 hppa ~ia64 ~mips ~ppc ~ppc64 ~riscv ~s390 sparc ~x86"
 #IUSE="amqp caps dbi geoip2 http ipv6 json kafka libressl mongodb pacct python redis smtp snmp spoof-source systemd tcpd test"
 #REQUIRED_USE="python? ( ${PYTHON_REQUIRED_USE} )"
 #RESTRICT="!test? ( test )"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )"
+	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts
+"
 
 S="${WORKDIR}"
 
@@ -33,7 +35,7 @@ src_prepare() {
 		sed -e "s/@SYSLOGNG_VERSION@/${MY_PV_MM}/g" "${FILESDIR}/${f}" > "${T}/${f%.in}" || die
 	done
 
-	for f in syslog-ng.rc; do
+	for f in syslog-ng.rc_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -49,7 +51,7 @@ src_install() {
 	insinto /etc/logrotate.d
 	newins "${T}/syslog-ng.logrotate" syslog-ng
 
-	newinitd "${T}/syslog-ng.rc" syslog-ng
+	newinitd "${T}/syslog-ng.rc_common" syslog-ng
 	newconfd "${FILESDIR}/syslog-ng.confd" syslog-ng
 
 	keepdir /etc/syslog-ng/patterndb.d /var/lib/syslog-ng
