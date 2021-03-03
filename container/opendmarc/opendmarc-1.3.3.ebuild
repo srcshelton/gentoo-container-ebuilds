@@ -14,6 +14,7 @@ SLOT="0"
 
 RDEPEND="
 	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts
 	acct-group/milter
 	acct-user/milter"
 
@@ -22,7 +23,7 @@ S="${WORKDIR}"
 src_prepare() {
 	local f
 
-	for f in opendmarc.initd; do
+	for f in opendmarc.initd_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -34,7 +35,7 @@ src_prepare() {
 src_install() {
 	default
 
-	newinitd "${T}"/opendmarc.initd opendmarc
+	newinitd "${T}"/opendmarc.initd_common opendmarc
 	newconfd "${FILESDIR}"/opendmarc.confd opendmarc
 
 	insinto /etc/opendmarc

@@ -1,0 +1,175 @@
+#!/sbin/openrc-run
+# Copyright 1999-2020 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+getconfval() {
+	local val="${1:-}"
+
+	[ -n "${val:-}" ] || return 1
+
+	sed 's/#.*$//' "${CONFFILE}" |
+		grep "^[[:space:]]*${val}[[:space:]]" |
+		awk '{ print $2 }' |
+		tail -n 1
+}
+
+: ${CONFFILE:=/etc/opendmarc/${RC_SVCNAME}.conf}
+: ${OPENDMARC_BASEDIR:=$(getconfval BaseDirectory)}
+: ${OPENDMARC_SOCKET_TYPE:=$(getconfval Socket | cut -d':' -f 1)}
+: ${OPENDMARC_SOCKET:=${OPENDMARC_SOCKET_TYPE}:${OPENDMARC_BASEDIR:+${OPENDMARC_BASEDIR}}/$(
+	getconfval Socket | cut -d':' -f 2-
+   )}
+: ${OPENDMARC_PIDFILE:=${OPENDMARC_BASEDIR:+${OPENDMARC_BASEDIR}}/$(getconfval PidFile)}
+: ${OPENDMARC_SOCKET:=local:/var/run/${PN}/${RC_SVCNAME}.sock}
+: ${OPENDMARC_PIDFILE:=/var/run/${PN}/${RC_SVCNAME}.pid}
+
+podman_memory_size='tiny'
+
+PN="${RC_SVCNAME:=opendmarc}" # PN='opendmarc'
+PV='@PVR@'
+CATEGORY='mail-filter'
+container_dir_run="$( dirname "${OPENDMARC_PIDFILE}" )"
+container_svc_pid="${OPENDMARC_PIDFILE}"
+command_opts="-c ${CONFFILE}"
+
+container_dir_run_mode='0750'
+container_dir_run_owner="${OPENDMARC_USER}"
+container_dir_run_group="${OPENDMARC_GROUP}"
+container_dir_log_owner="${OPENDMARC_USER}"
+container_dir_log_group="${OPENDMARC_GROUP}"
+
+container_use_pid=0
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--log-level debug
+
+	#--cap-drop ALL
+	--cap-add DAC_OVERRIDE
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--network host
+)
+
+dockermounts=(
+	${dockermount_syslog}
+	${dockermount_etc},ro=true
+	${dockermount_log}
+	${dockermount_run}
+)
+
+_containers_set_args
+
+#command_user='milter:milter'
+retry='TERM/10/KILL/2'
+
+description="A milter providing DKIM signing and verification"
+extra_commands="checkconfig"
+#extra_started_commands="stats"
+description_checkconfig="Validate configuration"
+#description_stats="Output statistics"
+
+required_files="${CONFFILE}"
+
+
+depend() {
+	need containers
+	use dns logger net
+	before mta
+}
+
+checkconfig() {
+	local -i rc=0
+
+	if [ ! -f "${CONFFILE:-}" ] ; then
+		eerror "Configuration file '${CONFFILE}' is missing"
+		return 1
+	fi
+
+	if [ -z "${OPENDMARC_PIDFILE:-}" ] ; then
+		eerror "Configuration must set PidFile - recommend adding" \
+			"'PidFile /var/run/opendmarc/${RC_SVCNAME}.pid' to" \
+			"'${CONFFILE}'"
+		return 1
+	fi
+	if [ 'true' = "$(getconfval Background)" ]; then
+		eerror "${RC_SVCNAME} service cannot run with Background key" \
+			"set to true!"
+		return 1
+	fi
+
+	_containers_check_paths || return ${?}
+
+	if [ 'local' = "${OPENDMARC_SOCKET_TYPE:-}" ]; then
+		OPENDMARC_SOCKET_DIR="$(
+			dirname "${OPENDMARC_BASEDIR:+${OPENDMARC_BASEDIR}}/$(
+				getconfval Socket |
+				cut -d':' -f 2-
+			)"
+		)"
+		checkpath --directory \
+				--mode 0750 \
+				--owner "${OPENDMARC_USER}:${OPENDMARC_GROUP}" \
+				--quiet \
+			"${OPENDMARC_SOCKET_DIR}" || return ${?}
+	fi
+
+	ebegin "Checking configuration in '${CONFFILE}'"
+        if service_started; then
+                docker exec "${container_name}" \
+                        opendmarc -c "${CONFFILE}" -n || rc=${?}
+        else
+		docker --log-level=error run "${command_docker_args[@]:-}" \
+				--cap-drop ALL \
+				--name "${container_name}-checkconfig" \
+				--network none \
+				--replace \
+				--restart no \
+				--rm \
+			"${dockerimage}" -c "${CONFFILE}" -n || rc=${?}
+	fi
+	eend ${rc} "${RC_SVCNAME} configuration check failed"
+	return ${rc}
+}
+
+start_pre() {
+	container_use_git="${OPENDMARC_USE_GIT:-}"
+
+	# If this isn't a restart, make sure that the user's config isn't
+	# busted before we try to start the daemon (this will produce
+	# better error messages than if we just try to start it blindly).
+	#
+	# If, on the other hand, this *is* a restart, then the stop_pre
+	# action will have ensured that the config is usable and we don't
+	# need to do that again.
+	if [ "${RC_CMD}" != "restart" ]; then
+		checkconfig || return $?
+	fi
+
+	_containers_start_pre || return ${?}
+
+	if
+		[ "${OPENDMARC_SOCKET#local:}" != "${OPENDMARC_SOCKET}" ] &&
+		[ -S "${OPENDMARC_SOCKET}" ] &&
+		! fuser -s "${OPENDMARC_SOCKET}"
+	then
+		# Remove stalled Unix socket if no other process is
+		# using it
+		if ! rm "${UNIX_SOCKET}"; then
+			eend 2 "failed to remove stale unix socket" \
+				"${OPENDMARC_SOCKET}"
+		fi
+	fi
+}
+
+stop_pre() {
+	# If this is a restart, check to make sure the user's config
+	# isn't busted before we stop the running daemon.
+	if [ "${RC_CMD}" = "restart" ]; then
+		checkconfig || return ${?}
+	fi
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
