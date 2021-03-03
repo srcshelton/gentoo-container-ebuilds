@@ -2,6 +2,27 @@
 # Copyright 1999-2016 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
+# Tiny
+: ${PODMAN_MEMORY_RESERVATION:=256m}
+: ${PODMAN_MEMORY_LIMIT:=512m}
+: ${PODMAN_SWAP_LIMIT:=1g}
+# Small
+#: ${PODMAN_MEMORY_RESERVATION:=512m}
+#: ${PODMAN_MEMORY_LIMIT:=1g}
+#: ${PODMAN_SWAP_LIMIT:=2g}
+# Medium
+#: ${PODMAN_MEMORY_RESERVATION:=1g}
+#: ${PODMAN_MEMORY_LIMIT:=2g}
+#: ${PODMAN_SWAP_LIMIT:=4g}
+# Large
+#: ${PODMAN_MEMORY_RESERVATION:=2g}
+#: ${PODMAN_MEMORY_LIMIT:=4g}
+#: ${PODMAN_SWAP_LIMIT:=8g}
+# Extra-Large
+#: ${PODMAN_MEMORY_RESERVATION:=4g}
+#: ${PODMAN_MEMORY_LIMIT:=8g}
+#: ${PODMAN_SWAP_LIMIT:=16g}
+
 : ${LIGHTTPD_CONF:=/etc/lighttpd/lighttpd.conf}
 : ${LIGHTTPD_USER:=$(awk '/^server.username/{s=$3};{sub("\"","",s)};END{print s}' ${LIGHTTPD_CONF} 2>/dev/null)}
 : ${LIGHTTPD_GROUP:=$(awk '/^server.groupname/{s=$3};{sub("\"","",s)};END{print s}' ${LIGHTTPD_CONF} 2>/dev/null)}
@@ -17,7 +38,7 @@ fi
 CONTENT_IMAGE='service.www-servers.web-content:latest'
 PHP_VER='7.4'
 PPN='php'
-PPV='7.4.11'
+PPV='7.4.14'
 PN="${RC_SVCNAME:=lighttpd}" # PN='lighttpd'
 PV='@PVR@'
 CATEGORY='www-servers'
@@ -31,6 +52,10 @@ dockeropts=(
 	#--cap-add NET_BIND_SERVICE
 	--cap-add SETGID
 	--cap-add SETUID
+
+	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
 
 	--network host
 	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
