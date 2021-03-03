@@ -24,6 +24,7 @@ BDEPEND="
 	|| ( sys-apps/coreutils sys-apps/busybox[make-symlinks] )"
 RDEPEND="
 	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts
 	acct-group/dhcp
 	acct-user/dhcp"
 
@@ -32,7 +33,7 @@ S="${WORKDIR}"
 src_prepare() {
 	local f
 
-	for f in dhcpd.init5 dhcrelay.init3; do
+	for f in dhcpd.init5_common dhcrelay.init3_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -43,8 +44,8 @@ src_prepare() {
 
 src_install() {
 	if use server; then
-		newinitd "${T}"/dhcpd.init5 dhcpd
-		newinitd "${T}"/dhcrelay.init3 dhcrelay
+		newinitd "${T}"/dhcpd.init5_common dhcpd
+		newinitd "${T}"/dhcrelay.init3_common dhcrelay
 		newconfd "${FILESDIR}"/dhcpd.conf2 dhcpd
 		newconfd "${FILESDIR}"/dhcrelay.conf dhcrelay
 		# docker/podman have poor IPv6 support...
