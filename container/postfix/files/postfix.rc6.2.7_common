@@ -1,0 +1,269 @@
+#!/sbin/openrc-run
+# Copyright 1999-2012 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+# Please read http://www.postfix.org/MULTI_INSTANCE_README.html for multi instance support
+CONF_DIR="/etc/postfix"
+CONF_OPT="${RC_SVCNAME##*.}"
+if [ -n ${CONF_OPT} ] && [ ${RC_SVCNAME} != "postfix" ]; then
+	CONF_DIR="${CONF_DIR}.${CONF_OPT}"
+fi
+if [ "${CONF_DIR}" = "/etc/postfix" ]; then
+	CONF_PARAM=""
+	CONF_MESSAGE=""
+else
+	CONF_PARAM="-c ${CONF_DIR}"
+	CONF_MESSAGE="(${CONF_DIR})"
+fi
+
+podman_memory_size='small'
+
+PN='postfix' # PN="${RC_SVCNAME:=postfix}"
+PV='@PVR@'
+CATEGORY='mail-mta'
+container_svc_pid="/var/spool/${RC_SVCNAME}/pid/master.pid"
+command_opts="${CONF_PARAM} start-fg"
+
+container_svc_wait=10
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	#--cap-add DAC_READ_SEARCH
+	#--cap-add FOWNER
+	#--cap-add FSETID
+	#--cap-add NET_BIND_SERVICE
+	--cap-add SETGID
+	#--cap-add SETPCAP
+	--cap-add SETUID
+
+	--hostname smtp
+	#--interactive
+
+	--network host
+	#--publish 25:25/tcp
+	#--publish 465:465/tcp
+	#--publish 587:587/tcp
+	#--publish 127.0.0.1:9025:9025/tcp
+)
+
+dockermounts=(
+	${dockermount_syslog}
+	--mount type=bind,source=/var/run/opendkim/,destination=/var/run/opendkim/,ro=true
+	--mount type=bind,source=/var/run/opendmarc/,destination=/var/run/opendmarc/,ro=true
+	--mount type=bind,source=/var/run/postgrey/,destination=/var/run/postgrey/,ro=true
+
+	${dockermount_etc}
+	--mount type=bind,source=/etc/dovecot/,destination=/etc/dovecot/
+	--mount type=bind,source=/etc/mail/,destination=/etc/mail/
+	${dockermount_ssl}
+	--mount type=bind,source=/etc/sasl2/,destination=/etc/sasl2/,ro=true
+
+	${dockermount_lib}
+	#${dockermount_log}
+	#${dockermount_run}
+	--mount type=bind,source=/var/log/dovecot/,destination=/var/log/dovecot/
+	--mount type=bind,source=/var/run/dovecot/,destination=/var/run/dovecot/
+	--mount type=bind,source=/var/spool/${RC_SVCNAME}/,destination=/var/spool/${RC_SVCNAME}/
+
+	--mount type=bind,source=/usr/local/sbin/,destination=/usr/local/sbin/,ro=true
+
+	--mount type=bind,source=/etc/passwd,destination=/etc/passwd,ro=true
+	--mount type=bind,source=/etc/group,destination=/etc/group,ro=true
+	--mount type=bind,source=/etc/shadow,destination=/etc/shadow,ro=true
+	--mount type=bind,source=/etc/gshadow,destination=/etc/gshadow,ro=true
+
+	--mount type=bind,source=/root/,destination=/root/
+	--mount type=bind,source=/home/,destination=/home/
+	--mount type=bind,source=/storage/mail/,destination=/storage/mail/
+)
+
+dockerports=()
+#need_net_bind_service=1
+#for svc_port in $(
+#	declare -a entries=()
+#	declare entry=''
+#
+#	entries=( $(
+#		sed 's/#.*$//' /etc/postfix/master.cf |
+#			grep -w 'inet' |
+#			awk '{ print $1 }'
+#	) )
+#	for entry in "${entries[@]}"; do
+#		if echo "${entry}" | grep -Eiq -- '^([a-z]+|3com.*|914c/g|9pfs)$'; then
+#			#getent services "${entry}" |
+#			#	grep -Eo '\s[0-9]+/[td][cd]p(\s|$)' |
+#			#	awk '{ print $1 }'
+#			getent services "${entry}" |
+#				grep -Eo '\s[0-9]+/[td][cd]p(\s|$)' |
+#				cut -d'/' -f 1 |
+#				awk '{ print $1 }'
+#		elif [ "${entry#*:}" != "${entry}" ]; then
+#			echo "${entry#*:}"
+#		else
+#			echo "${entry}"
+#		fi
+#	done | sort -n
+#); do
+#	#dockerports+=( --publish ${svc_port}:${svc_port}/tcp )
+#	if (( svc_port < 1024 )); then
+#		if (( need_net_bind_service )); then
+#			need_net_bind_service=0
+#			dockerports+=( --cap-add NET_BIND_SERVICE )
+#		fi
+#	fi
+#done
+#unset need_net_bind_service
+dockerports+=( --cap-add NET_BIND_SERVICE )
+
+_containers_set_args
+
+#command_user='postfix:postfix'
+retry="${STOP_TIMEOUT}"
+
+description="A fast and secure drop-in replacement for sendmail"
+extra_commands="checkconfig"
+extra_started_commands="reload abort flush"
+extra_stopped_commands="inspect"
+description_checkconfig="Check the configuration file"
+description_reload="Restart and Re-read configuration files"
+description_abort="Stop the Postfix mail system abruptly"
+description_flush="Attempt to deliver every message in the deferred mail queue"
+description_inspect="Launch container interactively"
+
+
+depend() {
+	need containers
+	use logger dns ypbind amavisd antivirus postfix_greylist net \
+		saslauthd spamd spampd opendkim opendmarc
+	if [ "${RC_SVCNAME}" = "postfix" ]; then
+		provide mta
+	fi
+}
+
+checkconfig() {
+	local -i rc=0
+
+	ebegin "Checking '${RC_SVCNAME}' configuration"
+	{
+	if service_started; then
+		docker exec "${container_name}" \
+			postfix ${CONF_PARAM} check || rc=${?}
+	else
+		docker run \
+				"${dockeropts[@]}" \
+				"${dockermounts[@]}" \
+				"${dockerports[@]}" \
+				--cap-drop ALL \
+				--network none \
+				--name "${container_name}-checkconfig" \
+				--replace \
+				--restart no \
+				--rm \
+			"${dockerimage}" ${CONF_PARAM} check || rc=${?}
+	fi
+	} 2>&1 |
+	grep --line-buffered --invert-match --fixed-strings ': warning: '
+	eend ${rc} "Configuration error. Please fix your configfile."
+}
+
+inspect() {
+	_containers_inspect
+}
+
+start_pre() {
+	unset container_dir_run
+	container_use_git="${POSTFIX_USE_GIT:-}"
+
+	if [ ! -d ${CONF_DIR} ]; then
+		eerror "${CONF_DIR} does not exist"
+		return 1
+	fi
+	if [ ! -z "${CONF_PARAM}" ]; then
+		einfo "Please consider updating your config for postmulti support."
+	fi
+
+	_containers_check_paths || return ${?}
+
+	checkpath --directory \
+		--mode 0755 \
+		--owner root:root \
+		--quiet "/var/spool/${RC_SVCNAME}" || return ${?}
+
+	_containers_start_pre
+
+	checkconfig
+}
+
+status() {
+	local -i _retval=0
+	local id=''
+
+	id="$( docker ps -a \
+		--filter "name=${container_name}" \
+		--format '{{.ID}}' 2>/dev/null
+	)"
+	if [ -z "${id:-}" ]; then
+		default_status
+		return ${?}
+	fi
+
+	if [ 'YES' = "${EINFO_QUIET:-}" ]; then
+		docker exec --tty "${container_name}" \
+			postfix ${CONF_PARAM} status >/dev/null 2>&1
+		_retval=${?}
+	else
+		einfon ""
+		{
+			docker exec --tty "${container_name}" \
+				postfix ${CONF_PARAM} status 2>&1
+			_retval=${?}
+		} | grep -v 'level=warning'
+	fi
+	if [ x${_retval} = 'x0' ]; then
+		#mark_service_started "${RC_SVCNAME}"
+		eend 0
+	else
+		mark_service_stopped "${RC_SVCNAME}"
+		eend 3
+	fi
+
+	_containers_status
+}
+
+reload() {
+	ebegin "Reloading postfix ${CONF_MESSAGE}"
+	docker exec "${container_name}" \
+		postfix ${CONF_PARAM} reload >/dev/null 2>&1
+	eend $?
+}
+
+abort() {
+	ebegin "Aborting postfix ${CONF_MESSAGE}"
+
+	if service_started "${RC_SVCNAME}"; then
+		mark_service_stopped "${RC_SVCNAME}"
+	fi
+	docker exec "${container_name}" \
+		postfix ${CONF_PARAM} abort >/dev/null 2>&1
+	eend $?
+}
+
+flush() {
+	ebegin "Flushing postfix ${CONF_MESSAGE}"
+	docker exec "${container_name}" \
+		postfix ${CONF_PARAM} flush >/dev/null 2>&1
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping postfix ${CONF_MESSAGE}"
+	docker exec "${container_name}" \
+		postfix ${CONF_PARAM} stop >/dev/null 2>&1
+	eend
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:

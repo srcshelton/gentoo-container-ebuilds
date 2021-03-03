@@ -2,6 +2,27 @@
 # Copyright 1999-2012 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
+# Tiny
+#: ${PODMAN_MEMORY_RESERVATION:=256m}
+#: ${PODMAN_MEMORY_LIMIT:=512m}
+#: ${PODMAN_SWAP_LIMIT:=1g}
+# Small
+: ${PODMAN_MEMORY_RESERVATION:=512m}
+: ${PODMAN_MEMORY_LIMIT:=1g}
+: ${PODMAN_SWAP_LIMIT:=2g}
+# Medium
+#: ${PODMAN_MEMORY_RESERVATION:=1g}
+#: ${PODMAN_MEMORY_LIMIT:=2g}
+#: ${PODMAN_SWAP_LIMIT:=4g}
+# Large
+#: ${PODMAN_MEMORY_RESERVATION:=2g}
+#: ${PODMAN_MEMORY_LIMIT:=4g}
+#: ${PODMAN_SWAP_LIMIT:=8g}
+# Extra-Large
+#: ${PODMAN_MEMORY_RESERVATION:=4g}
+#: ${PODMAN_MEMORY_LIMIT:=8g}
+#: ${PODMAN_SWAP_LIMIT:=16g}
+
 # Please read http://www.postfix.org/MULTI_INSTANCE_README.html for multi instance support
 CONF_DIR="/etc/postfix"
 CONF_OPT="${RC_SVCNAME##*.}"
@@ -28,6 +49,7 @@ PV='@PVR@'
 CATEGORY='mail-mta'
 dockeropts=(
 	#--log-level debug
+
 	--cap-drop ALL
 	--cap-add CHOWN
 	--cap-add DAC_OVERRIDE
@@ -38,6 +60,10 @@ dockeropts=(
 	--cap-add SETGID
 	#--cap-add SETPCAP
 	--cap-add SETUID
+
+	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
 
 	--network host
 	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
