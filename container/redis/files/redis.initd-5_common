@@ -1,0 +1,57 @@
+#!/sbin/openrc-run
+# Copyright 1999-2017 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${REDIS_DIR:=/var/lib/redis}
+: ${REDIS_CONF:=/etc/redis/redis.conf}
+: ${REDIS_OPTS:="${REDIS_CONF}"}
+: ${REDIS_USER:=redis}
+: ${REDIS_GROUP:=redis}
+: ${REDIS_TIMEOUT:=30}
+
+podman_memory_size='large'
+
+PN="${RC_SVCNAME:=redis}" # PN='redis'
+PV='@PVR@'
+CATEGORY='dev-db'
+# https://bugs.gentoo.org/631002#c10
+# Force '--daemonize no' to override the config file
+command_opts="${REDIS_OPTS} --daemonize no"
+
+container_dir_run_owner="${REDIS_USER}"
+container_dir_run_group="${REDIS_GROUP}"
+container_dir_log_owner="${REDIS_USER}"
+container_dir_log_group="${REDIS_GROUP}"
+container_use_git="${REDIS_USE_GIT:-}"
+
+container_svc_wait=10
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	--workdir "${REDIS_DIR}"
+
+	--network host
+	#--publish 6379:6379/tcp
+)
+
+dockermounts=( ${dockermount_defaults[@]} )
+
+dockervolumes=( ${dockervolumes_hugetlb} )
+
+_containers_set_args
+
+#command_user="${REDIS_USER}:${REDIS_GROUP}"
+start_stop_daemon_args="${start_stop_daemon_args:-} --chdir \"${REDIS_DIR}\""
+retry="${REDIS_TIMEOUT}"
+
+description="A persistent caching system, key-value and data structures database"
+
+
+depend() {
+	need containers
+	use logger
+	after keepalived
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:

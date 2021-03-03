@@ -1,0 +1,100 @@
+#!/sbin/openrc-run
+# Copyright 1999-2017 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${REDIS_SENTINEL_DIR:=/tmp}
+: ${REDIS_SENTINEL_CONF:=/etc/redis/sentinel.conf}
+: ${REDIS_SENTINEL_USER:=redis}
+: ${REDIS_SENTINEL_GROUP:=redis}
+: ${REDIS_SENTINEL_TIMEOUT:=30}
+
+podman_memory_size='tiny'
+
+# N.B. ${RC_SVCNAME} == 'redis-sentinel', so we don't want to use this here
+PN='redis'
+PV='@PVR@'
+CATEGORY='dev-db'
+container_name="openrc-${RC_SVCNAME}-${PV}"
+command_opts="${REDIS_SENTINEL_CONF:-} --sentinel"
+
+container_dir_owner='redis'
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	#--cap-add CHOWN
+	#--cap-add DAC_OVERRIDE
+	#--cap-add FOWNER
+	#--cap-add SETGID
+	#--cap-add SETUID
+
+	--workdir "${REDIS_SENTINEL_DIR}"
+
+	--network host
+	#--publish 26379:26379/tcp
+)
+
+dockermounts=(
+	${dockermount_syslog}
+
+	# redis-sentinel aborts if its config file isn't writable!
+	${dockermount_etc}  # ,ro=true
+
+	${dockermount_lib}
+	${dockermount_log}
+	${dockermount_run}
+)
+
+_containers_set_args
+
+#command_user="${REDIS_SENTINEL_USER}:${REDIS_SENTINEL_GROUP}"
+retry="${REDIS_SENTINEL_TIMEOUT}"
+
+name="containerised redis sentinel"
+description="A persistent caching system, key-value and data structures database"
+
+
+depend() {
+	need containers
+	use logger
+	after keepalived redis
+}
+
+start_pre() {
+	local object=''
+
+	_containers_check_paths || return 1
+
+	for object in \
+		"${REDIS_SENTINEL_CONF}" \
+		"$( dirname "${REDIS_SENTINEL_CONF}" )"
+	do
+		[ -n "${object:-}" ] || continue
+		[ "${object}" = '/' ] && continue
+		[ "${object%/}" = '/etc' ] && continue
+
+		# checkpath doesn't actually check owner access :(
+		#
+		#if ! checkpath \
+		#		--owner 'redis:redis' \
+		#		--writable \
+		#	"${object}"
+		#then
+		#	ewarn "Updating permissions on ${RC_SVCNAME}" \
+		#		"configuration $(
+		#			stat \
+		#					--dereference \
+		#					--format="%F '%n' ..." \
+		#				"${object}" |
+		#			sed 's/regular //'
+		#		)"
+			chown redis:redis "${object}" || return ${?}
+			chmod ug+rw "${object}" || return ${?}
+		#fi
+	done
+
+	_containers_start_pre
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
