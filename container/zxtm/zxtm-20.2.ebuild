@@ -11,14 +11,15 @@ LICENSE="Pulse"
 SLOT="0"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )"
+	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts"
 
 S="${WORKDIR}"
 
 src_prepare() {
 	local f
 
-	for f in zxtm.initd; do
+	for f in zxtm.initd_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -43,7 +44,7 @@ src_install() {
 		/var/log/zeus/stingray/{generic,log,master} \
 		/var/log/zeus/updater
 
-	newinitd "${T}"/zxtm.initd zxtm
+	newinitd "${T}"/zxtm.initd_common zxtm
 	#newconfd "${FILESDIR}"/zxtm.confd zxtm
 }
 

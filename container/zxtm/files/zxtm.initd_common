@@ -1,0 +1,155 @@
+#!/sbin/openrc-run
+# Copyright 1999-2020 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+podman_memory_size='medium'
+
+PN='zxtm' # PN="${RC_SVCNAME:=zxtm}"
+PV='@PVR@'
+CATEGORY='net-misc'
+command_opts=''
+
+container_dir_etc='/etc/zeus'
+container_dir_run='/var/run/zeus'
+container_dir_log='/var/log/zeus'
+container_use_git="${ZXTM_USE_GIT:-}"
+container_svc_pid="/var/run/zeus/zxtm/internal/pid"
+container_svc_pid_dir="/var/run/zeus/zxtm"
+
+container_svc_wait=20
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add NET_ADMIN
+	--cap-add NET_BIND_SERVICE
+	--cap-add NET_RAW
+	--cap-add SETGID
+	--cap-add SETUID
+	--cap-add SYS_CHROOT
+
+	--env ZEUS_COMMUNITY_EDITION='yes'
+	--env ZEUS_EULA='accept'
+)
+
+dockermounts=(
+	${dockermount_syslog}
+
+	--mount type=bind,source=/var/run/zeus/zxtm/internal/,destination=/opt/zeus/zxtm/internal/
+
+	--mount type=bind,source=/etc/zeus/uuid,destination=/opt/zeus/zxtm/etc/uuid
+	--mount type=bind,source=/etc/zeus/zxtm/,destination=/opt/zeus/zxtm/conf_A/
+
+	--mount type=bind,source=/etc/ssl/zeus/admin.private,destination=/opt/zeus/admin/etc/admin.private
+	--mount type=bind,source=/etc/ssl/zeus/admin.public,destination=/opt/zeus/admin/etc/admin.public
+	--mount type=bind,source=/etc/ssl/zeus/control.private,destination=/opt/zeus/zxtm/etc/control/control.private
+	--mount type=bind,source=/etc/ssl/zeus/control.public,destination=/opt/zeus/zxtm/etc/control/control.public
+	--mount type=bind,source=/etc/ssl/zeus/client/,destination=/opt/zeus/zxtm/conf_A/ssl/client_keys/
+	--mount type=bind,source=/etc/ssl/zeus/server/,destination=/opt/zeus/zxtm/conf_A/ssl/server_keys/
+
+	#--mount type=bind,source=/etc/zeus/admin/global.cfg,destination=/opt/zeus/admin/global.cfg
+	#--mount type=bind,source=/etc/zeus/admin/website,destination=/opt/zeus/admin/website
+	--mount type=bind,source=/etc/zeus/admin/,destination=/opt/zeus/admin/var/
+
+	--mount type=bind,source=/var/cache/zeus/admin/,destination=/opt/zeus/admin/gzip_cache/
+
+	--mount type=bind,source=/etc/zeus/stingray/,destination=/opt/zeus/stingrayafm/etc/
+	--mount type=bind,source=/var/lib/zeus/stingray/,destination=/opt/zeus/stingrayafm/current/var/lib/
+
+	--mount type=bind,source=/var/log/zeus/admin/,destination=/opt/zeus/admin/log/
+	--mount type=bind,source=/var/log/zeus/stingray/generic/,destination=/opt/zeus/stingrayafm/generic/log/
+	--mount type=bind,source=/var/log/zeus/stingray/log/,destination=/opt/zeus/stingrayafm/current/var/log/
+	--mount type=bind,source=/var/log/zeus/stingray/master/,destination=/opt/zeus/stingrayafm/generic/log-master/
+	--mount type=bind,source=/var/log/zeus/updater/,destination=/opt/zeus/updater/generic/auditlog/
+	--mount type=bind,source=/var/log/zeus/zxtm/,destination=/opt/zeus/log/
+)
+
+dockerports+=(
+	--network host
+
+	# SNMP responder on :161 when run as root, :1161 otherwise
+	#--publish 161:161/tcp
+	#--publish 1161:1161/tcp
+
+	# WAF Updater Slave port
+	#--publish 8092:8092/tcp
+
+	# WAF Enforcer/Decider port
+	#--publish 8100:8100/tcp
+
+	# WAF XML Master port
+	#--publish 11103:11103/tcp
+	# WAF XML Slave port
+	#--publish 11104:11104/tcp
+
+	# REST API
+	#--publish 9070:9070/tcp
+
+	# ZXTM
+	#--publish 9080:9080/tcp
+
+	# Admin Server
+	#--publish 9090:9090/tcp
+
+)
+#declare -i port=0
+#for port in $(
+#	grep -Riw '^port' /etc/zeus/admin/website /etc/zeus/zxtm/vservers |
+#	cut -d':' -f 2- |
+#	awk '{ print $2 }' |
+#	sort |
+#	uniq
+#); do
+#	(( 0 == port || 65535 == port )) && continue
+#	(( 9070 == port || 9080 == port || 9090 == port )) && continue
+#	dockerports+=( --publish ${port}:${port}/tcp )
+#done
+#unset port
+
+_containers_set_args
+
+name="containerised ZXTM"
+#command_user='nobody:nogroup'
+start_stop_daemon_args="$( echo "--wait 2000" \
+	"--stdout /var/log/zeus/${command}-${RC_SVCNAME}.log" \
+	"--stderr /var/log/zeus/${command}-${RC_SVCNAME}.log" )"
+retry='15'
+
+description="Pulse Secure Virtual Traffic Manager (former Zeus ZXTM)"
+extra_stopped_commands="inspect"
+description_inspect="Launch container interactively"
+
+
+depend() {
+	need containers
+}
+
+_checkpaths() {
+	_containers_check_paths
+
+	checkpath --directory \
+			--mode 0755 \
+			--owner root:root \
+			--quiet \
+		"${container_dir_run}"/zxtm || return 1
+	checkpath --directory \
+			--mode 0755 \
+			--owner root:sys \
+			--quiet \
+		"${container_dir_run}"/zxtm/internal || return 1
+}
+
+inspect() {
+	_checkpaths || return ${?}
+
+	_containers_inspect
+}
+
+start_pre() {
+	_checkpaths || return ${?}
+
+	_containers_start_pre
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
