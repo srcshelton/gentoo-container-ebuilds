@@ -1,0 +1,656 @@
+# Copyright 2021 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+# A note on ordering:
+#
+# podman_memory_size, PN, PV, CATEGORY, and optionally container_svc_pid and
+# command_opts as well as any container_dir* entries should be set before
+# this script is sourced.
+#
+# dockeropts, dockermounts, dockervolumes, etc. should all be set after, as
+# should any any changes to startstopdaemon's command_args variable.
+
+
+# We can't do this without arrays, so we need bash...
+#shellcheck shell=bash
+
+set -o pipefail >/dev/null 2>&1 || :
+
+case "${podman_memory_size:-}" in
+	tiny)
+		# Tiny
+		: "${PODMAN_MEMORY_RESERVATION:=256m}"
+		: "${PODMAN_MEMORY_LIMIT:=512m}"
+		: "${PODMAN_SWAP_LIMIT:=1g}"
+		;;
+	small)
+		# Small
+		: "${PODMAN_MEMORY_RESERVATION:=512m}"
+		: "${PODMAN_MEMORY_LIMIT:=1g}"
+		: "${PODMAN_SWAP_LIMIT:=2g}"
+		;;
+	medium)
+		# Medium
+		: "${PODMAN_MEMORY_RESERVATION:=1g}"
+		: "${PODMAN_MEMORY_LIMIT:=2g}"
+		: "${PODMAN_SWAP_LIMIT:=4g}"
+		;;
+	large)
+		# Large
+		: "${PODMAN_MEMORY_RESERVATION:=2g}"
+		: "${PODMAN_MEMORY_LIMIT:=4g}"
+		: "${PODMAN_SWAP_LIMIT:=8g}"
+		;;
+	xl|extra-large)
+		# Extra-Large
+		: "${PODMAN_MEMORY_RESERVATION:=4g}"
+		: "${PODMAN_MEMORY_LIMIT:=8g}"
+		: "${PODMAN_SWAP_LIMIT:=16g}"
+		;;
+	'')
+		: ;;
+	*)
+		ewarn "Unknown memory profile '${podman_memory_size}'"
+		;;
+esac
+
+command="docker"
+if type -pf podman >/dev/null; then
+	command="podman"
+	docker() {
+		test "${1:-}" = 'rm' && trap '' INT ;
+		podman ${@+"${@}"} ;
+		trap - INT ;
+	}
+	export -f docker
+fi
+
+#RC_SVCNAME=''            # Set by OpenRC
+#PN=''                    # Package name
+#PNV=''                   # Name variant (where $RC_SVCNAME differs from $PN)
+#PV=''                    # Package version
+#CATEGORY=''              # Package category
+#container_entrypoint=''  # Override container entry-point
+#command_opts=''          # Command-line arguments for ${RC_SVCNAME}
+
+if
+	[ -z "${RC_SVCNAME:-}" ] || [ -z "${PN:-}" ] ||
+	[ -z "${PV:-}" ] || [ -z "${CATEGORY:-}" ]
+then
+	eerror "Essential variables unset - aborting"
+	return 1
+fi
+
+dockerimage="${dockerimage-service.${CATEGORY}.${PN}:${PV}}"
+container_name="${container_name-openrc-${PNV:-${PN}}-${PV}}"
+dockeropts+=(
+	#--log-level debug
+
+	--cap-drop ALL
+
+	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
+
+	# "Port mappings have been discarded as one of the Host, Container,
+	#  Pod, and None network modes are in use"
+	#--network host
+
+	# Prevents containers from being stopped by sending signals to podman
+	#--init
+
+	#--interactive
+	--name "${container_name}"
+	--restart on-failure
+	#--rm
+	--tty
+)
+
+#shellcheck disable=SC2034
+{
+dockermount_syslog='--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log'
+dockermount_etc="--mount type=bind,source=/etc/${PN}/,destination=/etc/${PN}/"
+dockermount_lib="--mount type=bind,source=/var/lib/${PN},destination=/var/lib/${PN}"
+dockermount_log="--mount type=bind,source=/var/log/${PN},destination=/var/log/${PN}"
+dockermount_run="--mount type=bind,source=/var/run/${PN},destination=/var/run/${PN}"
+dockermount_ssl="--mount type=bind,source=/etc/ssl/,destination=/etc/ssl/,ro=true"
+dockermount_defaults=(
+	"${dockermount_syslog}"
+	"${dockermount_etc},ro=true"
+	"${dockermount_lib}"
+	"${dockermount_log}"
+	"${dockermount_run}"
+)
+
+dockervolumes_hugetlb='--volume /dev/hugetlb:/dev/hugetlb'
+dockervolumes_hugetlb1gb='--volume /dev/hugetlb1gb:/dev/hugetlb'
+
+# Used in _containers_check_paths, which can be called from multiple places
+container_dir_owner="${container_dir_owner-root}"
+container_dir_run_mode="${container_dir_run_mode-0755}"
+container_dir_run_owner="${container_dir_run_owner-${container_dir_owner}}"
+container_dir_run_group="${container_dir_run_group-${container_dir_run_owner}}"
+container_dir_run="${container_dir_run-/var/run/${PN}}"
+container_dir_log_mode="${container_dir_log_mode-0755}"
+container_dir_log_owner="${container_dir_log_owner-${container_dir_owner}}"
+container_dir_log_group="${container_dir_log_group-${container_dir_log_owner}}"
+container_dir_log="${container_dir_log-/var/log/${PN}}"
+container_dir_lib_mode="${container_dir_lib_mode-0755}"
+container_dir_lib_owner="${container_dir_lib_owner-${container_dir_owner}}"
+container_dir_lib_group="${container_dir_lib_group-${container_dir_lib_owner}}"
+#container_dir_lib="${container_dir_lib-/var/lib/${PN}}"
+container_dir_lib="${container_dir_lib:-}"
+# Used in %PID% expansion, _containers_start_pre, _containers_start_post, _containers_stop_post
+container_svc_pid="${container_svc_pid-${container_dir_run-/var/run/${PN}}/${RC_SVCNAME}.pid}"
+
+#command_user='root:root'
+command_background="true"
+start_stop_daemon_wait=1000
+start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" \
+	"--stdout /var/log/${PN}/${command}-${PNV:-${RC_SVCNAME}}.log" \
+	"--stderr /var/log/${PN}/${command}-${PNV:-${RC_SVCNAME}}.log" )"
+pidfile="/var/run/containers/${RC_SVCNAME}.pid"
+#retry='TERM/10/KILL/2'
+
+name="containerised ${RC_SVCNAME}"
+#description=''
+#description_healthcheck=''
+#description_unhealthy=''
+#description_cgroup_cleanup='Kill all processes in the cgroup'
+}
+
+_containers_set_args() {
+	# Allow substitutions on $command_opts
+	#shellcheck disable=SC2206
+	command_docker_args=(
+		${dockeropts[@]}
+		${container_entrypoint:+--entrypoint ${container_entrypoint}}
+		${dockermounts[@]:-}
+		${dockervolumes[@]:-}
+		${dockerports[@]:-}
+	)
+	#shellcheck disable=SC2034,SC2116,SC2154
+	command_args="run $( echo "${command_docker_args[*]:-}" \
+		"${dockerimage}" \
+		"${command_opts:+${command_opts/\%PID\%/${container_svc_pid}}}"
+	)"
+
+	return 0
+}
+
+_containers_check_paths() {
+	set -u
+
+	checkpath --directory \
+			--mode 0755 \
+			--owner root:root \
+			--quiet \
+		"$( dirname "${pidfile}" )" || return ${?}
+
+	if [ -n "${container_dir_run:-}" ]; then
+		if service_started || service_starting; then
+			checkpath --directory \
+					--mode "${container_dir_run_mode}" \
+					--owner "${container_dir_run_owner}:${container_dir_run_group}" \
+					--quiet \
+				"${container_dir_run}" || return ${?}
+		else # inactive stopping stopped coldplugged wasinactive
+			checkpath --directory-truncate \
+					--mode "${container_dir_run_mode}" \
+					--owner "${container_dir_run_owner}:${container_dir_run_group}" \
+					--quiet \
+				"${container_dir_run}" || return ${?}
+		fi
+	fi
+	if [ -n "${container_dir_log:-}" ]; then
+		checkpath --directory \
+				--mode "${container_dir_log_mode}" \
+				--owner "${container_dir_log_owner}:${container_dir_log_group}" \
+				--quiet \
+			"${container_dir_log}" || return ${?}
+	fi
+	if [ -n "${container_dir_lib:-}" ]; then
+		checkpath --directory \
+				--mode "${container_dir_lib_mode}" \
+				--owner "${container_dir_lib_owner}:${container_dir_lib_group}" \
+				--quiet \
+			"${container_dir_lib}" || return ${?}
+	fi
+
+	set +u
+
+	return 0
+} # _containers_check_paths
+
+_containers_inspect() {
+	local id=''
+
+	id="$(
+		docker ps -a \
+			--filter "name=${container_name_root:-${container_name}}-inspect" \
+			--format '{{.ID}}' 2>/dev/null
+	)"
+	if [ -n "${id}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	docker --log-level=info run "${command_docker_args[@]:-}" \
+			--entrypoint=/bin/sh \
+			--interactive \
+			--name "${container_name_root:-${container_name}}-inspect" \
+			--replace \
+			--restart no \
+			--rm \
+		"${dockerimage}"
+} # _containers_inspect
+
+_containers_start_pre() {
+	local container_dir_etc="${container_dir_etc-/etc/${PN}}"
+	local container_use_git="${container_use_git-0}"
+	local git=''
+
+	set -u
+
+	if
+		! docker image ls "localhost/${dockerimage}" 2>/dev/null |
+		grep -Fq -- 'localhost'
+	then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	if [ -n "${container_use_git:-}" ] && [ "${container_use_git}" != "0" ]; then
+		type -pf git >/dev/null 2>&1 && git="git"
+	fi
+	if [ -d "${container_dir_etc}/.git" ] && [ -n "${git:-}" ]; then
+		if ! [ -s "${container_dir_etc}/.gitignore" ]; then
+			cat >> "${container_dir_etc}/.gitignore" <<-EOF
+				**/._cfg[0-9][0-9][0-9][0-9]_*
+				**/.keep*
+				**/.*.swp
+			EOF
+			if [ -n "${container_git_ignore:-}" ]; then
+				cat >> "${container_dir_etc}/.gitignore" <<-EOF
+					${container_git_ignore}
+				EOF
+			fi
+		fi
+		pushd "${container_dir_etc}" >/dev/null 2>&1 &&
+			git status 2>/dev/null |
+			grep -Eq '^(Untracked files:$|\s+(deleted|modified|new file):\s+)' &&
+			einfo "Committing configuration changes to git" &&
+			git add --all . >/dev/null 2>&1 &&
+			git status |
+			tail -n +4 &&
+			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
+		popd >/dev/null 2>&1 || :
+	fi
+
+	local id=''
+	id="$( docker ps -a --filter "name=${container_name}" --format '{{.ID}}' 2>/dev/null )"
+	if [ -n "${id:-}" ]; then
+		veinfo "Attempting to remove old '${container_name}' container '${id}' ..."
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+
+	# This should have been cleared by checkpath's 'directory-truncate'...
+	test ! -e "${container_svc_pid:-}" || rm "${container_svc_pid}"
+
+	set +u
+
+	return 0
+} # _containers_start_pre
+
+_containers_start_post() {
+	local container_svc_wait="${container_svc_wait-5}"
+	local container_use_pid="${container_use_pid-1}"
+
+	set -u
+
+	local -i wait=${container_svc_wait}
+	local -i expect_pid=${container_use_pid}
+	local -i count=0 oldpid=0 pid=0 have_pid=0
+	local sleep='1'
+	local pid_file="${container_svc_pid:-}"
+	local pid_dir="${container_svc_pid_dir:-}"
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	if [ $(( expect_pid )) -eq 1 ]; then
+		while [ ! -s "${pid_file}" ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( count = count + 1 ))
+		done
+		if ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		else
+			have_pid=1
+		fi
+	else
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( pid = $( docker inspect \
+					--format '{{.State.Pid}}' \
+				"${container_name}" 2>/dev/null || echo '0'
+			) + 0 ))
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for '${PN}' from container '${container_name}' (got '${pid}')"
+		else
+			if [ "$( ps --pid $(( pid )) -ho comm )" = 'init' ]; then
+				: $(( pid = $( ps --ppid $(( pid )) -ho pid ) ))
+			fi
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving ${PN} PID '${pid}' ..."
+				if [ -n "${pid_dir:-}" ]; then
+					echo "${pid}" > "${pid_dir}/${RC_SVCNAME}.pid"
+				else
+					#shellcheck disable=SC2174
+					mkdir -pm "${container_dir_run_mode}" \
+						"$( dirname "${pid_file}" )"
+					echo "${pid}" > "${pid_file}"
+				fi
+			else
+				oldpid="$( awk '{ print $1 }' < "${pid_file}" )"
+				if ! [ "${oldpid}" = "${pid}" ]; then
+					vewarn "Correcting ${PN} PID from '${oldpid}' to '${pid}' ..."
+					if [ -n "${pid_dir:-}" ]; then
+						echo "${pid}" > "${pid_dir}/${RC_SVCNAME}.pid"
+					else
+						echo "${pid}" > "${pid_file}"
+					fi
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+
+	set +u
+
+	return 0
+} # _containers_start_post
+
+_containers_status() {
+	local output='einfo' entry=''
+	local -i status=0
+
+	default_status || status=${?}
+
+	if [ 'YES' = "${EINFO_QUIET:-}" ]; then
+		return ${status}
+	fi
+
+	if (( status )); then
+		output='ewarn'
+	else
+		status_host_pid="$( cat "${pidfile}" 2>/dev/null )" ||
+			eerror "Unable to read host PID '${pidfile}': ${?}"
+		status_container_pid="$( cat "${container_svc_pid:-}" 2>/dev/null )" ||
+			eerror "Unable to read container PID '${status_container_pid:-}': ${?}"
+		if
+			[ "${status_host_pid:-1}" = '1' ] ||
+			[ "${status_container_pid:-1}" = '1' ]
+		then
+			output='eerror'
+		fi
+		$output "${RC_SVCNAME}: podman PID '${status_host_pid:-unknown}'," \
+			"host PID '$( awk '{ print $1 }' <<<"${status_container_pid:-unknown}" )'"
+		unset status_container_pid status_host_pid
+	fi
+
+	if [ $(( $( id -u ) )) -ne 0 ]; then
+		return ${status}
+	fi
+
+	entry="$( podman ps -a \
+		--filter "name=${container_name}" \
+		--format '{{.ID}}!{{.ImageID}}!{{.Status}}!{{.CreatedAt}}!{{.RunningFor}}!{{.Mounts}}!{{.Labels}}'
+		#--format '{{.ID}}!{{.ImageID}}!{{.Status}}!{{.CreatedAt}}!{{.RunningFor}}!{{.Size}}!{{.Mounts}}!{{.Labels}}'
+		#--size \
+	)"
+	if [ -z "${entry:-}" ]; then
+		eerror "podman has no data on this container"
+	else
+		local id image state created running mounts labels # size
+		while IFS='!' read -r id image state created running mounts labels; do # size
+			state="$( cut -d' ' -f 1 <<<"${state:-}" )"
+			created="$( cut -d'.' -f 1 <<<"${created:-}" | awk '{ print $2, $1 }' )"
+			labels="$( sed 's/^map\[// ; s/\]$//' <<<"${labels}" )"
+			mounts="$( sed 's/^\[// ; s/\]$//' <<<"${mounts}" )"
+			running="${running% ago}"
+			if [ "${state:-}" != 'Up' ]; then
+				output='eerror'
+			fi
+			$output ''
+			$output "Image:  ${image:--}, ID: ${id:--}: (${state:-Unknown})${created:+ created ${created}}${running:+ running for ${running}}"
+			#$output "Size:   ${size}"
+			if [ -n "${labels:-}" ]; then
+				$output ''
+				local part='' label='' value='' tab=$'\t'
+				local -i first=1
+				for part in ${labels}; do
+					if [[ "${part}" =~ ':' ]]; then
+						if [ -n "${label:-}" ] && [ -n "${value:-}" ]; then
+							if (( first )); then
+								first=0
+								$output "Labels: ${label}:${tab}'${value}'"
+							else
+								$output "        ${label}:${tab}'${value}'"
+							fi
+						fi
+						label="$( cut -d':' -f 1 <<<"${part}" )"
+						value="$( cut -d':' -f 2- <<<"${part}" )"
+					else
+						value+=" ${part}"
+					fi
+				done
+				if [ -n "${label:-}" ] && [ -n "${value:-}" ]; then
+					$output "        ${label}:${tab}'${value}'"
+				fi
+				unset first tab value label part
+			fi
+			if [ -n "${mounts:-}" ]; then
+				local mount=''
+				local -i first=1
+				$output ''
+				echo "${mounts}" | xargs -n 1 echo | sort -V | while read -r mount; do
+					if (( first )); then
+						first=0
+						$output "Mounts: ${mount}"
+					else
+						$output "        ${mount}"
+					fi
+				done
+				unset first mount
+			fi
+		done <<<"${entry}"
+		unset labels mounts running created state image id
+	fi
+
+	return ${status}
+} # _containers_status
+
+_containers_reload() {
+	local container_svc_wait="${container_svc_wait-5}"
+	local container_change_pid="${container_change_pid-0}"
+
+	set -u
+
+	local -i wait=${container_svc_wait}
+	local -i count=0 oldpid=0 pid=0 have_pid=0 rc=0
+	local sleep='1'
+	local pid_file="${container_svc_pid:-}"
+
+	if ! service_started "${RC_SVCNAME}" ; then
+		eerror "${RC_SVCNAME} isn't running"
+		return 1
+	fi
+
+	if sleep 0.1 >/dev/null 2>&1; then
+		sleep='0.1'
+		: $(( wait = wait * 10 ))
+	fi
+
+	# N.B. oldpid should be the host PID, not the PID within the container...
+	if [ -s "${pid_file}" ]; then
+		: $(( oldpid = $( awk '{ print $1 }' < "${pid_file}" 2>/dev/null) ))
+	fi
+	if [ -z "${oldpid:-}" ] || [ $(( oldpid )) -lt 301 ]; then
+		: $(( oldpid = 0 ))
+		if [ $(( container_change_pid )) -eq 1 ]; then
+			if ! echo '0' > "${pid_file}"; then
+				eerror "Unable to overwrite PID file '${pid_file}'"
+				return 1
+			fi
+		fi
+	fi
+
+	ebegin "Reloading ${RC_SVCNAME} configuration"
+	# Warning: reload causes the PID of some services to change, but
+	# then re-written by the service after a short delay...
+	: $(( pid = oldpid ))
+	if [ $(( pid )) -gt 300 ]; then
+		kill -HUP "${pid}"
+	else
+		: $(( pid = $(
+			docker inspect \
+					--format '{{.State.Pid}}' \
+				"${container_name}" 2>/dev/null || echo '0'
+		) + 0 ))
+		if [ $(( pid )) -gt 300 ]; then
+			kill -HUP "${pid}"
+		else
+			eend 1 "Cannot determine PID for service '${RC_SVCNAME}'"
+			return 1
+		fi
+	fi
+	rc=${?}
+	eend ${rc}
+
+	if [ $(( container_change_pid )) -ne 1 ]; then
+		set +u
+
+		return ${rc}
+	fi
+
+	pid=0
+
+	while [ $(( oldpid )) -eq "$(
+		awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
+	)" ] && [ $(( count )) -lt $(( wait )) ]; do
+		sleep ${sleep}
+		: $(( count = count + 1 ))
+	done
+
+	if [ $(( oldpid )) -eq "$(
+		awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
+	)" ]; then
+		eerror "Timed-out waiting for reloaded '${RC_SVCNAME}' PID in file '${pid_file}'"
+	else
+		veinfo "Service '${RC_SVCNAME}' changed from host PID" \
+			"'${oldpid}' to container PID $(
+				awk '{ print $1 }' < "${pid_file}" 2>/dev/null ||
+				echo '0'
+			)"
+		have_pid=1
+	fi
+	if [ $(( have_pid )) -eq 1 ]; then
+		# Even though generally considered vestigial, all linux kernels
+		# still reserve PIDs up to 300 for kernel use only...
+		count=0
+		while [ $(( pid )) -lt 301 ] && [ $(( count )) -lt $(( wait )) ]; do
+			sleep ${sleep}
+			: $(( pid = $( docker inspect \
+					--format '{{.State.Pid}}' \
+				"${container_name}"
+			) ))
+			: $(( count = count + 1 ))
+		done
+
+		if ! [ $(( pid )) -gt 300 ]; then
+			eerror "Unable to determine valid PID for reloaded" \
+				"service '${RC_SVCNAME}' from container" \
+				"'${container_name}' (got '${pid}')"
+		else
+			if ! [ -e "${pid_file}" ]; then
+				vewarn "Saving updated ${RC_SVCNAME} PID" \
+					"'${pid}' to '${pid_file}' ..."
+				echo "${pid}" > "${pid_file}"
+			else
+				: $(( oldpid = $(
+					awk '{ print $1 }' < "${pid_file}" 2>/dev/null ||
+					echo '0'
+				) + 0 ))
+				if ! [ $(( oldpid )) -eq "${pid}" ]; then
+					vewarn "Correcting ${RC_SVCNAME} PID" \
+						"from '${oldpid}' to '${pid}' ..."
+					echo "${pid}" > "${pid_file}"
+				fi
+				unset oldpid
+			fi
+		fi
+	fi
+
+	set +u
+
+	return 0
+} # _containers_reload
+
+_containers_stop_post() {
+	local id=''
+
+	set -u
+
+	id="$( docker ps --filter "name=${container_name}" --format '{{.ID}}' 2>/dev/null )"
+	if [ -n "${id:-}" ]; then
+		docker stop "${id}" >/dev/null
+	fi
+
+	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		id="$( docker ps -a --filter "name=${container_name}" --format '{{.ID}}' 2>/dev/null )"
+		if [ -n "${id:-}" ]; then
+			docker rm --volumes "${id}" >/dev/null 2>&1
+		fi
+	fi
+
+	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
+		test ! -e "${container_svc_pid:-}" || rm "${container_svc_pid}"
+	fi
+
+	set +u
+
+	return 0
+} # _containers_stop_post
+
+start_pre() {
+	_containers_check_paths || return ${?}
+
+	_containers_start_pre
+} # start_pre
+
+start_post() {
+	_containers_start_post
+} # start_post
+
+status() {
+	_containers_status
+} # status
+
+stop_post() {
+	_containers_stop_post
+} # stop_post
+
+_containers_set_args
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
