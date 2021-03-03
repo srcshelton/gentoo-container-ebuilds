@@ -1,0 +1,49 @@
+#!/sbin/openrc-run
+# Copyright 1999-2013 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+podman_memory_size='tiny'
+
+# N.B. ${RC_SVCNAME} == 'ntpd', so we don't want to use this
+PN='openntpd'
+PV='@PVR@'
+CATEGORY='net-misc'
+command_opts="-d -f /etc/${PN}/ntpd.conf -p %PID% ${NTPD_OPTS:-}"
+
+container_use_git="${OPENNTPD_USE_GIT:-}"
+container_use_pid=0
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add NET_BIND_SERVICE
+	--cap-add SETGID
+	--cap-add SETUID
+	--cap-add SYS_CHROOT
+	--cap-add SYS_NICE
+	--cap-add SYS_TIME
+
+	--workdir '/'
+
+	--network host
+	#--publish 123:123/udp
+)
+
+dockermounts=( ${dockermount_defaults[@]} )
+
+_containers_set_args
+
+#command_user="openntpd:openntpd"
+
+name="containerised OpenNTPD"
+description="Lightweight NTP server ported from OpenBSD"
+
+
+depend() {
+	need containers
+	after ntp-client
+	use dns logger
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
