@@ -2,6 +2,27 @@
 # Copyright 1999-2014 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
+# Tiny
+#: ${PODMAN_MEMORY_RESERVATION:=256m}
+#: ${PODMAN_MEMORY_LIMIT:=512m}
+#: ${PODMAN_SWAP_LIMIT:=1g}
+# Small
+#: ${PODMAN_MEMORY_RESERVATION:=512m}
+#: ${PODMAN_MEMORY_LIMIT:=1g}
+#: ${PODMAN_SWAP_LIMIT:=2g}
+# Medium
+: ${PODMAN_MEMORY_RESERVATION:=1g}
+: ${PODMAN_MEMORY_LIMIT:=2g}
+: ${PODMAN_SWAP_LIMIT:=4g}
+# Large
+#: ${PODMAN_MEMORY_RESERVATION:=2g}
+#: ${PODMAN_MEMORY_LIMIT:=4g}
+#: ${PODMAN_SWAP_LIMIT:=8g}
+# Extra-Large
+#: ${PODMAN_MEMORY_RESERVATION:=4g}
+#: ${PODMAN_MEMORY_LIMIT:=8g}
+#: ${PODMAN_SWAP_LIMIT:=16g}
+
 : ${NAMED_CONF:=/etc/bind/${RC_SVCNAME}.conf}
 : ${NAMED_PIDFILE:=${PIDFILE:-$( grep pid-file "${NAMED_CONF}" | cut -d'"' -f 2 )}}
 : ${NAMED_NICELEVEL:=0}
@@ -18,11 +39,16 @@ PV='@PVR@'
 CATEGORY='net-dns'
 dockeropts=(
 	#--log-level debug
+
 	--cap-drop ALL
 	--cap-add NET_BIND_SERVICE
 	--cap-add SETUID
 	--cap-add SETGID
-	--interactive
+
+	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
+
 	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
 
 	# Allow access to DHCP hosts list for DNS auto-generation ...
@@ -37,8 +63,6 @@ dockeropts=(
 	#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.sh.service,destination=/usr/libexec/entrypoint.sh
 	#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.d/named,destination=/usr/libexec/entrypoint.d/named
 
-	--name "openrc-${PN}-${PV}"
-
 	--network host
 	# "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use"
 	#--publish 53:53/udp
@@ -46,6 +70,8 @@ dockeropts=(
 	#--publish 127.0.0.1:953:953/tcp
 	#--publish 127.0.0.1:8053:8053/tcp
 
+	--interactive
+	--name "openrc-${PN}-${PV}"
 	--restart on-failure
 	#--rm
 	--tty
