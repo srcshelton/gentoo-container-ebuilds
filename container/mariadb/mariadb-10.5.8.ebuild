@@ -24,6 +24,7 @@ SLOT="10.5/${SUBSLOT:-0}"
 # dev-db/mysql-connector-c needed for my_print_defaults ...
 RDEPEND="
 	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts
 	dev-db/mysql-connector-c
 	acct-group/mysql
 	acct-user/mysql"
@@ -89,7 +90,7 @@ mysql_init_vars() {
 src_prepare() {
 	local f
 
-	for f in init.d-2.3; do
+	for f in init.d-2.3_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -103,7 +104,7 @@ src_install() {
 	#
 
 	newconfd "${FILESDIR}/conf.d-2.0" "mysql"
-	newinitd "${T}/init.d-2.3" "mysql"
+	newinitd "${T}/init.d-2.3_common" "mysql"
 
 	insinto /etc/logrotate.d
 	newins "${FILESDIR}/logrotate.mysql-2.3" "mysql"

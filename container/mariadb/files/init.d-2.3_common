@@ -1,0 +1,342 @@
+#!/sbin/openrc-run
+# Copyright 1999-2019 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+: ${MY_CNF:=/etc/${RC_SVCNAME}/my.cnf}
+: ${STARTUP_TIMEOUT:=900}
+: ${STARTUP_EARLY_TIMEOUT:=1000}
+: ${STOP_TIMEOUT:=120}
+
+get_config() {
+	my_print_defaults --defaults-file="$1" mysqld server mariadb |
+		sed -n -e "s/^--$2=//p"
+}
+
+mysql_svcname() {
+	local ebextra=
+	case "${RC_SVCNAME}" in
+		mysql*) ;;
+		*) ebextra=" (mysql)" ;;
+	esac
+	echo "${RC_SVCNAME}${ebextra}"
+}
+
+stringContain() { [ -z "${2##*$1*}" ] && [ -z "$1" -o -n "$2" ]; }
+
+podman_memory_size='extra-large'
+
+PN='mariadb' # PN="${RC_SVCNAME:=mysql}"
+PV='@PVR@'
+CATEGORY='dev-db'
+container_svc_pid="$( get_config "${MY_CNF}" 'pid[_-]file' | tail -n 1 )"
+command_opts="--defaults-file=\"${MY_CNF}\"${MY_ARGS:+ ${MY_ARGS}}"
+
+container_dir_owner='mysql'
+container_dir_run="$( dirname "${container_svc_pid}" )"
+container_dir_log_mode='0750'
+container_dir_lib_mode='0750'
+# /var/lib/mysql may have been relocated to a volume with more space
+# available...
+container_dir_lib="$( readlink -m "/var/lib/mysql" )"
+
+container_svc_wait="${STARTUP_EARLY_TIMEOUT}"
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+
+	--network host
+	#--publish 3306:3306/tcp
+)
+
+dockermounts=(
+	${dockermount_syslog}
+	--mount type=bind,source=/etc/mysql/,destination=/etc/mysql/,ro=true
+	${dockermount_ssl}
+	--mount type=bind,source=$( readlink -e /var/lib/mysql/ ),destination=/var/lib/mysql
+	--mount type=bind,source=/var/log/mysql/,destination=/var/log/mysql
+	--mount type=bind,source=/var/run/mysqld/,destination=/var/run/mysqld
+)
+
+dockervolumes=( ${dockervolumes_hugetlb1gb} )
+
+_containers_set_args
+
+name="containerised $( mysql_svcname )"
+#command_user='mysql:mysql'
+start_stop_daemon_args="$( echo "--wait ${STARTUP_EARLY_TIMEOUT}" \
+	"--stdout /var/log/${RC_SVCNAME}/${command}-${RC_SVCNAME}.log" \
+	"--stderr /var/log/${RC_SVCNAME}/${command}-${RC_SVCNAME}.log" \
+	" ${DEBUG:+--verbose} ${NICE:+--nicelevel ${NICE}} ${IONICE:+--ionice ${IONICE}}" )"
+retry="${STOP_TIMEOUT}"
+
+description="An enhanced, drop-in replacement for MySQL"
+extra_commands="checkconfig"
+extra_started_commands="check reload upgrade"
+extra_stopped_commands="bootstrap_galera init_mysql_database"
+description_checkconfig="Verify the server's configuration"
+description_check="Run mysqlcheck against running database instance"
+description_reload="Reload the grant tables and flush tables, logs, thread, and host cache"
+description_upgrade="Run mysql_upgrade against running database instance"
+description_bootstrap_galera="Start a new Galera cluster with this server as the initial node"
+description_init_mysql_database="Initialise a new, blank system database"
+
+required_files="${MY_CNF}"
+
+
+depend() {
+	use net.lo
+	# localmount needed for $basedir
+	need containers
+	# This service has its own timeout and may need to wait for repairs
+	# or remote synchronization
+	keyword -timeout
+}
+
+_checkpaths() {
+	if [[ -z "${container_svc_pid:-}" || "${container_svc_pid}" == '/' ]]; then
+		eerror "Could not determine $( mysql_svcname ) PID file location"
+		return 1
+	fi
+
+	_containers_check_paths
+}
+
+checkconfig() {
+	local my_cnf="${MY_CNF:-/etc/${RC_SVCNAME}/my.cnf}"
+	local basedir="$( get_config "${my_cnf}" basedir | tail -n 1 )"
+	local svc_name="$( mysql_svcname )"
+
+	_checkpaths || return ${?}
+
+	ebegin "Checking mysqld configuration '${my_cnf}' for ${svc_name}"
+
+	if [ ${RC_CMD} = "checkconfig" ] ; then
+		# We are calling checkconfig specifically.  Print warnings
+		# regardless.
+		if service_started; then
+			docker exec "${container_name}" \
+				mysqld --defaults-file="${my_cnf}" \
+					--help --verbose > /dev/null
+		else
+			docker run "${dockeropts[@]}" "${dockermounts[@]}" \
+					--cap-drop ALL \
+					--entrypoint="${basedir}"/sbin/mysqld \
+					--name "${container_name}-checkconfig" \
+					--network none \
+					--replace \
+					--restart no \
+					--rm \
+				"${dockerimage}" --defaults-file="${my_cnf}" \
+					--help --verbose > /dev/null
+		fi
+	else
+		# Suppress output to check the return value
+		if service_started; then
+			docker exec "${container_name}" \
+				mysqld --defaults-file="${my_cnf}" \
+					--help --verbose > /dev/null 2>&1
+		else
+			docker run "${dockeropts[@]}" "${dockermounts[@]}" \
+					--cap-drop ALL \
+					--entrypoint="${basedir}"/sbin/mysqld \
+					--name "${container_name}-checkconfig" \
+					--network none \
+					--replace \
+					--restart no \
+					--rm \
+				"${dockerimage}" --defaults-file="${my_cnf}" \
+					--help --verbose > /dev/null 2>&1
+		fi
+
+		# If the above command does not return 0 then there is an error
+		# to echo to the user
+		if [ $(( $? )) -ne 0 ] ; then
+			if service_started; then
+				docker exec "${container_name}" \
+					mysqld --defaults-file="${my_cnf}" \
+						--help --verbose > /dev/null
+			else
+				docker run "${dockeropts[@]}" "${dockermounts[@]}" \
+						--cap-drop ALL \
+						--entrypoint="${basedir}"/sbin/mysqld \
+						--name "${container_name}-checkconfig" \
+						--network none \
+						--replace \
+						--restart no \
+						--rm \
+					"${dockerimage}" --defaults-file="${my_cnf}" \
+						--help --verbose > /dev/null
+			fi
+		fi
+	fi
+
+	eend $? "${svc_name} config check failed"
+}
+
+check() {
+	docker exec --interactive --tty "${container_name}" \
+		mysqlcheck -A -u root -p
+}
+
+upgrade() {
+	docker exec --interactive --tty "${container_name}" \
+		mysql_upgrade -u root -p -vvvv
+}
+
+bootstrap_galera() {
+	MY_ARGS="--wsrep-new-cluster ${MY_ARGS}"
+	mark_service_starting
+	if start ; then
+		mark_service_started
+		return 0
+	else
+		mark_service_stopped
+		return 1
+	fi
+}
+
+start_pre() {
+	container_dir_etc="/etc/${RC_SVCNAME}"
+	container_use_git="${MYSQLD_USE_GIT:-}"
+
+	# Check for old conf.d variables that mean migration was not yet done.
+	set | egrep -sq '^(mysql_slot_|MYSQL_BLOG_PID_FILE|STOPTIMEOUT)'
+	rc=$?
+	# Yes, MYSQL_INIT_I_KNOW_WHAT_I_AM_DOING is a hidden variable.
+	# It does have a use in testing, as it is possible to build a config
+	# file that works with both the old and new init scripts simulateously.
+	if [ "${rc}" = 0 -a -z "${MYSQL_INIT_I_KNOW_WHAT_I_AM_DOING}" ]; then
+		eerror "You have not updated your conf.d for the new" \
+			"mysql-init-scripts-2 revamp."
+		eerror "Not proceeding because it may be dangerous."
+		return 1
+	fi
+
+	if [ ! -r "${MY_CNF}" ] ; then
+		eerror "Cannot read $( mysql_svcname ) configuration file" \
+			"'${MY_CNF}'"
+		return 1
+	fi
+
+	# Check the config or die
+	if [ ${RC_CMD} != "restart" ] ; then
+		checkconfig || return ${?}
+	fi
+
+	# 'tail -n 1' is critical below since we only want the last instance of
+	# the option
+	local wsrep="$(
+		get_config "${MY_CNF}" 'wsrep[_-]on' |
+		tail -n 1 |
+		awk '{ print tolower( $0 ) }'
+	)"
+	local wsrep_new=$(
+		get_config "${MY_CNF}" 'wsrep-new-cluster' |
+		tail -n 1
+	)
+
+	# Galera: Only check datadir if not starting a new cluster and galera
+	# is enabled,  wsrep_on is not on or wsrep-new-cluster exists in the
+	# config or MY_ARGS
+	[ "${wsrep}" = "1" ] && wsrep="on"
+	if
+		[ "${wsrep}" != "on" ] ||
+		[ -n "${wsrep_new}" ] ||
+		stringContain 'wsrep-new-cluster' "${MY_ARGS}"
+	then
+		local datadir="$( get_config "${MY_CNF}" datadir | tail -n 1 )"
+		if [ ! -d "${datadir}" ] ; then
+			eerror "MySQL datadir '${datadir}' is empty or invalid"
+			eerror "Please check your config file '${MY_CNF}'"
+			return 1
+		fi
+
+		if [ ! -d "${datadir}"/mysql ] ; then
+			eerror "System database '${datadir}/mysql' missing"
+
+			# find which package is installed to report an error
+			local EROOT="$ (portageq envvar EROOT )"
+			local DBPKG_P="$( portageq match ${EROOT} $(
+				portageq expand_virtual ${EROOT} virtual/mysql |
+				head -n 1
+			) )"
+			if [ -z ${DBPKG_P} ] ; then
+				eerror "You don't appear to have a server" \
+					"package installed yet."
+			else
+				eerror "You don't appear to have the mysql" \
+					"database installed yet."
+				eerror "Please run 'emerge --config" \
+					"=${DBPKG_P}' to have this done..."
+			fi
+			return 1
+		fi
+	fi
+
+	_containers_start_pre
+}
+
+reload() {
+	checkconfig || return ${?}
+
+	_containers_reload
+}
+
+stop_pre() {
+	if [ ${RC_CMD} = "restart" ] ; then
+		checkconfig || return ${?}
+	fi
+}
+
+init_mysql_database() {
+	if ! service_stopped; then
+		eerror "Service $( mysql_svcname ) must be stopped in order" \
+			"to configure a new installation"
+		return 1
+	fi
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	_checkpaths || return ${?}
+
+	local DOCKER_SCRIPT="$( cat <<-EOF
+		inherit() { : ; } ;
+		use() { case "\${1:-}" in prefix) return 1 ;; *) return 0 ;; esac ; } ;
+		die() { echo -e "\${*:-Unknown error}" ; exit 1 ; } ;
+		TMPDIR='/var/log/mysql/install' ;
+		mkdir -p "\${TMPDIR}" ;
+		rm -f "\${TMPDIR}/mysqld-help" ;
+		. /lib/gentoo/functions.sh ;
+		. <( bzcat /var/db/pkg/dev-db/mariadb-1*/environment.bz2 ) ;
+		. \$( ls -1 /var/db/pkg/dev-db/mariadb-1*/*.ebuild ) ;
+		pkg_config ;
+		rm -f "\${TMPDIR}/mysqld-help" ;
+	EOF
+	)"
+	local nl="$( printf '\n' )"
+	DOCKER_SCRIPT="$( echo "${DOCKER_SCRIPT}" | tr "${nl}" ' ' )"
+	unset nl
+
+	docker run "${dockeropts[@]}" "${dockermounts[@]}" \
+			--cap-add CHOWN \
+			--cap-add DAC_OVERRIDE \
+			--cap-add KILL \
+			--cap-add SETGID \
+			--cap-add SETUID \
+			--entrypoint=/bin/bash \
+			--env MYSQL_ROOT_PASSWORD \
+			--name "${container_name}-config" \
+			--network none \
+			--replace \
+			--restart no \
+			--rm \
+			--user root:root \
+		"${dockerimage}" -c "${DOCKER_SCRIPT}"
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
