@@ -13,17 +13,20 @@ KEYWORDS="amd64 ~ppc x86"
 #RESTRICT="mirror"
 SLOT="0"
 
-RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )"
+BDEPEND="container/spamassassin:="
+RDEPEND="${BDEPEND}
+	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts"
 
 S="${WORKDIR}"
 
 src_prepare() {
 	local f
 
-	for f in init-r1; do
+	for f in init-r1_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
+			-e "s#@PPVR@#$( best_version -r container/spamassassin | sed 's|^container/spamassassin-||' )#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
 	done
 
@@ -31,7 +34,7 @@ src_prepare() {
 }
 
 src_install() {
-	newinitd "${T}"/init-r1 spampd
+	newinitd "${T}"/init-r1_common spampd
 	newconfd "${FILESDIR}"/conf spampd
 }
 

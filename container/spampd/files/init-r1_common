@@ -1,0 +1,175 @@
+#!/sbin/openrc-run
+# Copyright 1999-2014 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${SPAMPD_PIDDIR:=/var/run/${RC_SVCNAME}}
+: ${SPAMPD_PIDFILE:=${SPAMPD_PIDDIR}/spampd.pid}
+
+podman_memory_size='small'
+
+PN="${RC_SVCNAME:=spampd}" # PN='spampd'
+PV='@PVR@'
+CATEGORY='mail-filter'
+container_svc_pid="${SPAMPD_PIDFILE}"
+command_opts="--pid=\"%PID%\"${SPAMPD_OPTS:+ ${SPAMPD_OPTS}} --debug --nodetach"
+
+container_dir_owner='mail'
+container_dir_run_mode='0775'
+container_dir_lib_owner='root'
+
+# Additional delay for sa-update/geoipupdate...
+container_svc_wait=120
+
+. /etc/init.d/_containers_common || return ${?}
+
+#svc_port="$(
+#	echo "${SPAMPD_OPTS:-}" |
+#	grep -Eo -- '--(port=[^[:space:]]+|host=[^[:space:]]+:[[:digit:]]+)([[:space:]]|"|$)' |
+#	cut -d'=' -f 2- |
+#	cut -d':' -f 2- |
+#	awk '{ print $1 }'
+#)"
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--network host
+	#--publish 10025:10025/tcp
+	#${svc_port:+--network host}
+	#${svc_port:+--publish ${svc_port}:${svc_port}/tcp}
+)
+
+dockermounts=(
+	${dockermount_syslog}
+	--mount type=bind,source=/var/run/mysqld/,destination=/var/run/mysqld/,ro=true
+
+	--mount type=bind,source=/etc/GeoIP.conf,destination=/etc/GeoIP.conf,ro=true
+	--mount type=bind,source=/var/lib/geoip/,destination=/usr/share/GeoIP/,ro=true
+
+	--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/mail/spamassassin/
+	--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/spamassassin/
+	#--mount type=bind,source=/usr/share/spamassassin/,destination=/usr/share/spamassassin/,ro=true
+	--mount type=bind,source=/var/lib/spamassassin/,destination=/var/lib/spamassassin/
+
+	${dockermount_log}
+	${dockermount_run}
+
+	--mount type=bind,source=/etc/passwd,destination=/etc/passwd,ro=true
+	--mount type=bind,source=/etc/group,destination=/etc/group,ro=true
+	--mount type=bind,source=/etc/shadow,destination=/etc/shadow,ro=true
+	--mount type=bind,source=/etc/gshadow,destination=/etc/gshadow,ro=true
+
+	--mount type=bind,source=/root/,destination=/root/
+	--mount type=bind,source=/home/,destination=/home/
+	--mount type=bind,source=/storage/mail/,destination=/storage/mail/
+
+)
+
+_containers_set_args
+
+#command_user="mail:mail"
+#retry='10'
+retry='SIGQUIT/2/SIGTERM/10/SIGKILL/2'
+command_progress='true'
+
+#required_dirs="${SPAMPD_PIDDIR}"
+
+description="An extensible mail filter which can identify and tag spam"
+extra_stopped_commands="forceupdate update"
+extra_started_commands="clean"
+description_forceupdate="Download and force compilation of spamassassin and geoip updates"
+description_update="Download and compile spamassassin and geoip updates"
+description_clean="run DCC maintenance"
+
+
+depend() {
+	use containers
+	use logger mysql postgresql
+	before mta
+}
+
+update() {
+	local PPN='' PPV='' CATEGORY='' dockerimage='' force="${1:-}"
+	local -a dockeropts=()
+
+	PPN='spamassassin-update'
+	PPV='@PPVR@'
+	CATEGORY='mail-filter'
+	dockeropts=(
+		#--log-level debug
+
+		--cap-drop ALL
+		--cap-add SETGID
+		--cap-add SETUID
+
+		# Tiny
+		#: ${PODMAN_MEMORY_RESERVATION:=256m}
+		#: ${PODMAN_MEMORY_LIMIT:=512m}
+		#: ${PODMAN_SWAP_LIMIT:=1g}
+		--memory-reservation 256m
+		--memory 512m
+		--memory-swap 1g
+
+		${dockermount_syslog}
+		--mount type=bind,source=/etc/GeoIP.conf,destination=/etc/GeoIP.conf,ro=true
+		--mount type=bind,source=/var/lib/geoip/,destination=/usr/share/GeoIP
+		--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/mail/spamassassin
+		--mount type=bind,source=/etc/mail/spamassassin/,destination=/etc/spamassassin
+		#--mount type=bind,source=/usr/share/spamassassin/,destination=/usr/share/spamassassin # Unused
+		--mount type=bind,source=/var/lib/spamassassin/,destination=/var/lib/spamassassin
+		${force:+--mount type=bind,source=/dev/null,destination=/.force-update,ro=true}
+		#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.d/sa-update,destination=/usr/libexec/entrypoint.d/sa-update,ro=true
+
+		--network host
+
+		--interactive
+		--name "openrc-${PPN}-${PPV}"
+		--rm
+		--tty
+	)
+	dockerimage="service.${CATEGORY}.${PPN}:${PPV}"
+
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	local id=''
+	local -i rc=0
+	id="$( docker ps -a --filter "name=openrc-${PPN}-${PPV}-update" --format '{{.ID}}' )"
+	if [ -n "${id:-}" ]; then
+		docker rm --volumes "${id}" >/dev/null 2>&1
+	fi
+	if [ -z "${force:-}" ]; then
+		einfo "Updating spamassassin data ..."
+	else
+		einfo "Force-updating spamassassin data ..."
+	fi
+	docker run "${dockeropts[@]}" \
+			--name "openrc-${PPN}-${PPV}-update" \
+			--replace \
+			--restart no \
+			--rm \
+		"${dockerimage}" || rc=${?}
+
+	return ${rc}
+}
+
+forceupdate() {
+	update force
+}
+
+clean() {
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	docker exec "openrc-${PN}-${PV}" \
+		sh -c /etc/cron.daily/dccd
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
