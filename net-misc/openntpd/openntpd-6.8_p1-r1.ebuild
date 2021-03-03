@@ -1,4 +1,4 @@
-# Copyright 1999-2020 Gentoo Authors
+# Copyright 1999-2021 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
@@ -13,24 +13,24 @@ SRC_URI="mirror://openbsd/OpenNTPD/${MY_P}.tar.gz"
 
 LICENSE="BSD GPL-2"
 SLOT="0"
-KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~mips ppc ppc64 s390 sparc x86"
-IUSE="libressl selinux systemd"
+KEYWORDS="~amd64 ~arm ~arm64 ~hppa ~ia64 ~ppc ~ppc64 ~sparc ~x86"
+IUSE="constraints libressl selinux systemd"
 
 DEPEND="
 	!net-misc/ntp[-openntpd]
-	libressl? ( dev-libs/libressl:0= )"
+	constraints? (
+		libressl? ( dev-libs/libressl:= )
+		!libressl? ( dev-libs/libretls:= )
+	)"
 
 RDEPEND="
 	${DEPEND}
 	acct-group/openntpd
 	acct-user/openntpd
+	constraints? ( app-misc/ca-certificates )
 	selinux? ( sec-policy/selinux-ntp )"
 
 S="${WORKDIR}/${MY_P}"
-
-PATCHES=(
-	"${FILESDIR}/openntpd-6.2p3-fno-common.patch"
-)
 
 src_prepare() {
 	default
@@ -48,18 +48,18 @@ src_prepare() {
 	sed -i 's:"/db/ntpd.drift":"/openntpd/ntpd.drift":' src/ntpd.h || die
 
 	# fix default config to use gentoo pool
-	sed -i 's:servers pool.ntp.org:#servers pool.ntp.org:' ntpd.conf || die
+	sed -i 's:^server:#server:g' ntpd.conf || die
 	printf "\n# Choose servers announced from Gentoo NTP Pool\nservers 0.gentoo.pool.ntp.org\nservers 1.gentoo.pool.ntp.org\nservers 2.gentoo.pool.ntp.org\nservers 3.gentoo.pool.ntp.org\n" >> ntpd.conf || die
 
-	# disable constraint config if libressl not enabled
-	use libressl || sed -ie 's/^constraints/#constraints/g' ntpd.conf || die
+	use constraints || sed -ie 's/^constraints/#constraints/g' ntpd.conf || die
 }
 
 src_configure() {
 	econf \
+		--sysconfdir=/etc/openntpd \
+		--with-cacert=/etc/ssl/certs/ca-certificates.crt \
 		--with-privsep-user=openntpd \
-		--with-privsep-path=/var/lib/openntpd/chroot \
-		$(use_enable libressl https-constraint)
+		$(use_enable constraints https-constraint)
 }
 
 src_install() {
