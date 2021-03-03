@@ -2,6 +2,27 @@
 # Copyright 1999-2014 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
+# Tiny
+: ${PODMAN_MEMORY_RESERVATION:=256m}
+: ${PODMAN_MEMORY_LIMIT:=512m}
+: ${PODMAN_SWAP_LIMIT:=1g}
+# Small
+#: ${PODMAN_MEMORY_RESERVATION:=512m}
+#: ${PODMAN_MEMORY_LIMIT:=1g}
+#: ${PODMAN_SWAP_LIMIT:=2g}
+# Medium
+#: ${PODMAN_MEMORY_RESERVATION:=1g}
+#: ${PODMAN_MEMORY_LIMIT:=2g}
+#: ${PODMAN_SWAP_LIMIT:=4g}
+# Large
+#: ${PODMAN_MEMORY_RESERVATION:=2g}
+#: ${PODMAN_MEMORY_LIMIT:=4g}
+#: ${PODMAN_SWAP_LIMIT:=8g}
+# Extra-Large
+#: ${PODMAN_MEMORY_RESERVATION:=4g}
+#: ${PODMAN_MEMORY_LIMIT:=8g}
+#: ${PODMAN_SWAP_LIMIT:=16g}
+
 conf="/etc/conf.d/postgrey"
 
 if [ -n "${POSTGREY_TYPE:-}" ]; then
@@ -26,11 +47,16 @@ CATEGORY='mail-filter'
 #svc_port="${POSTGREY_PORT:-}"
 dockeropts=(
 	#--log-level debug
+
 	--cap-drop ALL
 	--cap-add CHOWN
 	--cap-add DAC_OVERRIDE
 	--cap-add SETGID
 	--cap-add SETUID
+
+	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
 
 	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
 

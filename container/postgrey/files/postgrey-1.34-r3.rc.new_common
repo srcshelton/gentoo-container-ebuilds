@@ -1,0 +1,137 @@
+#!/sbin/openrc-run
+# Copyright 1999-2014 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+conf="/etc/conf.d/postgrey"
+
+if [ -n "${POSTGREY_TYPE:-}" ]; then
+	if [ "${POSTGREY_TYPE}" = 'inet' ]; then
+		: ${POSTGREY_ADDR:=--${POSTGREY_TYPE}=${POSTGREY_HOST:-}:${POSTGREY_PORT:-}}
+	elif [ "${POSTGREY_TYPE}" = 'unix' ]; then
+		: ${POSTGREY_ADDR:=--${POSTGREY_TYPE}=${POSTGREY_SOCKET:-}}
+	fi
+fi
+: ${POSTGREY_PID:=/var/run/postgrey/postgrey.pid}
+
+podman_memory_size='tiny'
+
+PN="${RC_SVCNAME:=postgrey}" # PN='postgrey'
+PV='@PVR@'
+CATEGORY='mail-filter'
+container_svc_pid="${POSTGREY_PID}"
+command_opts="$( echo "${POSTGREY_ADDR} --verbose \"--pidfile=%PID%\"" \
+	"${POSTGREY_DELAY:+--delay=${POSTGREY_DELAY}} ${POSTGREY_OPTS:-}" \
+	" ${POSTGREY_TEXT:+\"--greylist-text=${POSTGREY_TEXT}\"}" )"
+
+container_dir_owner='postgrey'
+container_dir_log_mode='0775'
+container_dir_log_owner='root'
+container_dir_log_group='postgrey'
+
+container_use_pid=0
+
+. /etc/init.d/_containers_common || return ${?}
+
+#svc_port="${POSTGREY_PORT:-}"
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add SETGID
+	--cap-add SETUID
+
+	--network host
+	#--publish 10030:10030/tcp
+	#${svc_port:+--publish ${svc_port}:${svc_port}/tcp}
+)
+
+dockermounts=(
+	${dockermount_syslog}
+
+	--mount type=bind,source=/etc/postfix/,destination=/etc/postfix/,ro=true
+
+	--mount type=bind,source=/var/spool/postfix/${PN}/,destination=/var/spool/postfix/${PN}
+	#--mount type=bind,source=/var/spool/postfix/private/,destination=/var/spool/postfix/private
+
+	${dockermount_log}
+	${dockermount_run}
+)
+
+_containers_set_args
+
+#command_user="postgrey:postgrey"
+
+description="Postgrey is a Postfix policy server implementing greylisting"
+extra_started_commands="reload"
+description_reload="Reload configuration"
+
+
+depend() {
+	need containers
+	before postfix
+	provide postfix_greylist
+}
+
+conf_error() {
+	eerror "You need to setup ${conf} first"
+	return 1
+}
+
+checkconfig() {
+	if [ -z "${POSTGREY_TYPE:-}" ]; then
+		einfo "You need to choose the server type you want"
+		einfo "by setting the POSTGREY_TYPE variable in ${conf}."
+	else
+		if [ "${POSTGREY_TYPE}" = "inet" ]; then
+			if [ -z "${POSTGREY_PORT}" ] || [ -z "${POSTGREY_HOST}" ]; then
+				einfo "The following entries are missing in ${conf}:"
+				[ -z "${POSTGREY_HOST}" ] && einfo "  - POSTGREY_HOST"
+				[ -z "${POSTGREY_PORT}" ] && einfo "  - POSTGREY_PORT"
+				conf_error
+			fi
+			POSTGREY_ADDR="${POSTGREY_TYPE}=${POSTGREY_HOST}:${POSTGREY_PORT}"
+		else
+			if [ -z "${POSTGREY_SOCKET}" ]; then
+				einfo "The following entries are missing in ${conf}:"
+				[ -z "${POSTGREY_SOCKET}" ] && einfo "  - POSTGREY_SOCKET"
+				conf_error
+			fi
+			POSTGREY_ADDR="${POSTGREY_TYPE}=${POSTGREY_SOCKET}"
+		fi
+	fi
+
+	if [ -z "${POSTGREY_PID:-}" ]; then
+		einfo "The following entries are missing in ${conf}:"
+		[ -z "${POSTGREY_PID:-}" ] && einfo "  - POSTGREY_PID"
+		conf_error
+	fi
+}
+
+start_pre() {
+	_containers_check_paths || return ${?}
+
+	checkpath --directory \
+			--mode 0755 \
+			--owner root:root \
+			--quiet \
+		/var/spool/postfix || return${?} 
+	checkpath --directory \
+			--mode 0700 \
+			--owner postfix:root \
+			--quiet \
+		/var/spool/postfix/private || return ${?}
+
+	checkconfig || return ${?}
+
+	_containers_start_pre || return ${?}
+
+	[ "${POSTGREY_TYPE}" = "unix" ] && rm -f "${POSTGREY_SOCKET}" || :
+}
+
+reload() {
+	checkconfig || return ${?}
+
+	_containers_reload
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
