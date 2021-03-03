@@ -1,0 +1,174 @@
+#!/sbin/openrc-run
+# Copyright 1999-2019 Gentoo Authors
+# Distributed under the terms of the GNU General Public License, v2 or later
+
+: ${DOVECOT_CONFDIR:=/etc/dovecot}
+: ${DOVECOT_CONF:=${DOVECOT_CONFDIR}/dovecot.conf}
+: ${DOVECOT_BASEDIR:=/var/run/dovecot}
+: ${DOVECOT_PIDFILE:=${DOVECOT_BASEDIR}/master.pid}
+
+DOVECOT_INSTANCE=${RC_SVCNAME##*.}
+if [ -n "${DOVECOT_INSTANCE:-}" ] && [ "${RC_SVCNAME}" != "dovecot" ]; then
+	DOVECOT_CONF="${DOVECOT_CONFDIR}/dovecot.${DOVECOT_INSTANCE}.conf"
+fi
+DOVECOT_BASEDIR="$(
+	cat "${DOVECOT_CONF}" |
+	sed 's/#.*$//' |
+	grep 'base_dir\s*=' |
+	cut -d'=' -f 2- |
+	sed 's/^[[:space:]]\+// ; s/[[:space:]]\+$//'
+)"
+DOVECOT_BASEDIR=${DOVECOT_BASEDIR:-/var/run/dovecot}
+DOVECOT_PIDFILE=${DOVECOT_BASEDIR}/master.pid
+
+podman_memory_size='tiny'
+
+PN="${RC_SVCNAME:=dovecot}" # PN='dovecot'
+PV='@PVR@'
+CATEGORY='net-mail'
+container_svc_pid="${DOVECOT_PIDFILE}"
+command_opts="-F -c \"${DOVECOT_CONF}\""
+
+container_dir_lib="/var/lib/${PN}"
+container_dir_lib_mode='0750'
+container_dir_log_owner='dovecot'
+container_dir_log_group='mail'
+
+container_svc_wait=30
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add KILL
+	--cap-add NET_BIND_SERVICE
+	--cap-add SETGID
+	--cap-add SETUID
+	--cap-add SYS_CHROOT
+
+	--workdir '/'
+
+	--network host
+	#--publish 110:110/tcp
+	#--publish 143:143/tcp
+	#--publish 587:587/tcp
+	#--publish 993:993/tcp
+	#--publish 995:995/tcp
+	#--publish 2000:2000/tcp              # sieve_deprecated
+	#--publish 4190:4190/tcp              # sieve
+	#--publish 127.0.0.1:24242:24242/tcp  # stats
+)
+
+dockermounts=(
+	${dockermount_defaults[@]}
+
+	${dockermount_ssl}
+
+	--mount type=bind,source=/root/,destination=/root/
+	--mount type=bind,source=/home/,destination=/home/
+	--mount type=bind,source=/storage/mail/,destination=/storage/mail/
+)
+
+_containers_set_args
+
+#command_user="dovecot:dovecot"
+
+description="An IMAP and POP3 server written with security primarily in mind"
+extra_commands="checkconfig"
+extra_started_commands="reload"
+extra_stopped_commands="inspect"
+description_checkconfig="Validate the service's configuration"
+description_inspect="Launch container interactively"
+description_reload="Reload ${RC_SVCNAME} configuration"
+
+required_files="${DOVECOT_CONF}"
+required_dirs="${DOVECOT_CONFDIR}"
+
+
+depend() {
+	after bootmisc ldap mysql ntp-client ntpd postgresql saslauthd slapd
+	need containers
+	use logger
+	before postfix
+}
+
+checkconfig() {
+	ebegin "Checking dovecot configuration"
+
+	if service_started; then
+		DOVECOT_BASEDIR="$(
+			docker exec "${container_name}" \
+				dovecot -c ${DOVECOT_CONF} config -h base_dir 2>/dev/null |
+			tr -d '[:cntrl:]'
+		)"
+	else
+		DOVECOT_BASEDIR="$(
+			docker --log-level=info run \
+					${dockeropts[@]} "${dockermounts[@]}" \
+					--name "${container_name}-getconfig" \
+					--replace \
+					--restart no \
+					--rm \
+				${dockerimage} \
+					-c ${DOVECOT_CONF} config -h base_dir 2>/dev/null |
+			tr -d '[:cntrl:]'
+		)"
+	fi
+
+	if [ $(( $? )) -ne 0 ]; then
+		eerror "Error parsing ${DOVECOT_CONF}"
+		return 1
+	fi
+	if ! [ -d "${DOVECOT_BASEDIR:-}" ]; then
+		ewarn "dovecot base_dir '${DOVECOT_BASEDIR:-}' does not exist"
+	fi
+
+	eend 0
+}
+
+inspect() {
+	_containers_inspect
+}
+
+start_pre() {
+	container_dir_etc="${DOVECOT_CONFDIR}"
+	container_use_git="${DOVECOT_USE_GIT:-}"
+
+	_containers_start_pre
+}
+
+start() {
+	local md=''
+
+	if [ -d /etc/dovecot/conf.d ]; then
+		cut -d':' -f 1,6 /etc/passwd | while IFS=':' read -r user home; do
+			md="$(
+				sed 's/#.*$//' /etc/dovecot/conf.d/*.conf |
+				grep 'mail_location\s*=' |
+				cut -d ':' -f 2- |
+				sed "s:%[un]:${user:-}: ; s:%h:${home:-}:"
+			)"
+			if [[ -d "${md}" ]]; then
+				#echo "${user} : ${md} -> $( readlink -e "${md}" )"
+				dockermounts+=( --mount type=bind,source=$( readlink -e ${md} ),destination=${md} )
+			fi
+		done
+		dockermounts+=( --mount type=bind,source=/etc/passwd,destination=/etc/passwd,ro=true )
+		dockermounts+=( --mount type=bind,source=/etc/group,destination=/etc/group,ro=true )
+		dockermounts+=( --mount type=bind,source=/etc/shadow,destination=/etc/shadow,ro=true )
+		dockermounts+=( --mount type=bind,source=/etc/gshadow,destination=/etc/gshadow,ro=true )
+		export command_args="run ${dockeropts[*]} ${dockermounts[*]} ${dockerimage} -F -c \"${DOVECOT_CONF}\""
+	fi
+
+	default_start
+}
+
+reload() {
+	checkconfig || return ${?}
+
+	_containers_reload
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:

@@ -2,6 +2,27 @@
 # Copyright 1999-2019 Gentoo Authors
 # Distributed under the terms of the GNU General Public License, v2 or later
 
+# Tiny
+: ${PODMAN_MEMORY_RESERVATION:=256m}
+: ${PODMAN_MEMORY_LIMIT:=512m}
+: ${PODMAN_SWAP_LIMIT:=1g}
+# Small
+#: ${PODMAN_MEMORY_RESERVATION:=512m}
+#: ${PODMAN_MEMORY_LIMIT:=1g}
+#: ${PODMAN_SWAP_LIMIT:=2g}
+# Medium
+#: ${PODMAN_MEMORY_RESERVATION:=1g}
+#: ${PODMAN_MEMORY_LIMIT:=2g}
+#: ${PODMAN_SWAP_LIMIT:=4g}
+# Large
+#: ${PODMAN_MEMORY_RESERVATION:=2g}
+#: ${PODMAN_MEMORY_LIMIT:=4g}
+#: ${PODMAN_SWAP_LIMIT:=8g}
+# Extra-Large
+#: ${PODMAN_MEMORY_RESERVATION:=4g}
+#: ${PODMAN_MEMORY_LIMIT:=8g}
+#: ${PODMAN_SWAP_LIMIT:=16g}
+
 : ${DOVECOT_CONFDIR:=/etc/dovecot}
 : ${DOVECOT_CONF:=${DOVECOT_CONFDIR}/dovecot.conf}
 : ${DOVECOT_BASEDIR:=/var/run/dovecot}
@@ -36,6 +57,10 @@ dockeropts=(
 	--cap-add SETGID
 	--cap-add SETUID
 	--cap-add SYS_CHROOT
+
+	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
 
 	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
 
