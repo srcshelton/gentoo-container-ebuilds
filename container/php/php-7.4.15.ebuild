@@ -1,4 +1,4 @@
-# Copyright 1999-2020 Gentoo Authors
+# Copyright 1999-2021 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 #### The data in the files/ subdirectory of this ebuild are a combination ####
@@ -17,7 +17,7 @@ LICENSE="PHP-3.01
 	fpm? ( BSD-2 )
 	gd? ( gd )
 	unicode? ( BSD-2 LGPL-2.1 )"
-KEYWORDS="~alpha amd64 arm arm64 hppa ~ia64 ~mips ppc ppc64 ~s390 sparc x86 ~amd64-linux ~x86-linux ~ppc-macos ~x64-macos ~x86-macos"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~mips ppc ppc64 ~s390 sparc x86 ~amd64-linux ~x86-linux ~ppc-macos ~x64-macos"
 IUSE="bcmath +fpm gd unicode"
 #RESTRICT="!test? ( test )"
 SLOT="$(ver_cut 1-2)"
@@ -32,6 +32,7 @@ SLOT="$(ver_cut 1-2)"
 BDEPEND="container/lighttpd:="
 RDEPEND="
 	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts
 	${BDEPEND}
 "
 
@@ -40,7 +41,7 @@ S="${WORKDIR}"
 src_prepare() {
 	local f
 
-	for f in php-fpm.init-r5; do
+	for f in php-fpm.init-r5_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			-e "s#@CPVR@#$( best_version -r container/lighttpd | sed 's|^container/lighttpd-||' )#" \
@@ -56,7 +57,7 @@ src_install() {
 	sed -e "s|/lib/|/$(get_libdir)/|g" -i "${ED}/etc/env.d/20php${SLOT}" || die
 	sed -e "s|php5|php${SLOT}|g" -i "${ED}/etc/env.d/20php${SLOT}" || die
 
-	newinitd "${T}"/php-fpm.init-r5 php-fpm
+	newinitd "${T}"/php-fpm.init-r5_common php-fpm
 	newconfd "${FILESDIR}"/php-fpm.confd php-fpm
 
 	insinto /etc/logrotate.d/
