@@ -15,12 +15,13 @@ KEYWORDS="amd64 ~ppc x86"
 SLOT="0"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )"
+	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts"
 
 S="${WORKDIR}"
 
 src_prepare() {
-	for f in imapproxy.initd; do
+	for f in imapproxy.initd_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -30,7 +31,7 @@ src_prepare() {
 }
 
 src_install() {
-	newinitd "${T}"/imapproxy.initd imapproxy
+	newinitd "${T}"/imapproxy.initd_common imapproxy
 	newconfd "${FILESDIR}"/imapproxy.confd imapproxy
 
 	insinto /etc/imapproxy/
