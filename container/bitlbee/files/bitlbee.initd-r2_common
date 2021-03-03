@@ -1,0 +1,43 @@
+#!/sbin/openrc-run
+# Copyright 1999-2019 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+podman_memory_size='tiny'
+
+PN="${RC_SVCNAME:=bitlbee}" # PN='bitlbee'
+PV='@PVR@'
+CATEGORY='net-im'
+command_opts="-D -P %PID% -u bitlbee -n -v ${BITLBEE_OPTS:-}"
+
+container_dir_owner='bitlbee'
+container_use_git="${BITLBEE_USE_GIT:-}"
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add SETUID
+	--cap-add SETGID
+
+	--workdir "/var/lib/${PN}"
+
+	--network host
+	#--publish 6667:6667/tcp
+)
+
+dockermounts=( ${dockermount_defaults[@]} )
+
+_containers_set_args
+
+#command_user="bitlbee:bitlbee"
+start_stop_daemon_args="${start_stop_daemon_args:-} --chdir /var/lib/${PN}"
+
+description="irc to IM gateway that support multiple IM protocols"
+
+
+depend() {
+	after logger
+	need containers
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:

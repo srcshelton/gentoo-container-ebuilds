@@ -22,6 +22,7 @@ SLOT="0"
 
 RDEPEND="
 	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts
 	acct-group/bitlbee
 	acct-user/bitlbee
 "
@@ -35,7 +36,7 @@ S="${WORKDIR}"
 src_prepare() {
 	local f
 
-	for f in bitlbee.initd-r2; do
+	for f in bitlbee.initd-r2_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -49,7 +50,7 @@ src_install() {
 	fperms 700 /var/lib/bitlbee
 	fowners bitlbee:bitlbee /var/lib/bitlbee
 
-	newinitd "${T}"/bitlbee.initd-r2 bitlbee
+	newinitd "${T}"/bitlbee.initd-r2_common bitlbee
 	newconfd "${FILESDIR}"/bitlbee.confd-r2 bitlbee
 
 	insinto /etc/bitlbee
