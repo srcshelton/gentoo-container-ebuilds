@@ -1,0 +1,334 @@
+#!/sbin/openrc-run
+# Copyright 1999-2019 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+DIR="${UNIFI_DIR:-/opt/unifi-controller-6.0.45}"
+class="com.ubnt.ace.Launcher"
+jar="${DIR}/lib/ace.jar"
+
+: ${MONGOHOST:=localhost}
+: ${MONGOPORT:=27117}
+: ${MONGOLOCK:=${DIR}/db/mongod.lock}
+
+# User-defined options...
+#
+# Java options...
+JVM_OPTS=(
+	${JAVA_OPTS:-}
+	-Djava.awt.headless=true
+	-Dfile.encoding=UTF-8
+	#-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts
+	${JAVA_ENTROPY_GATHER_DEVICE:+-Djava.security.egd="${JAVA_ENTROPY_GATHER_DEVICE}"}
+	${JVM_MAX_HEAP_SIZE:+-Xmx${JVM_MAX_HEAP_SIZE}}
+	${JVM_INIT_HEAP_SIZE:+-Xms${JVM_INIT_HEAP_SIZE}}
+)
+# Application options...
+UNIFI_OPTS=(
+	-Dunifi.datadir="/var/lib/unifi" # -Dunifi.datadir="${DIR}/data"
+	-Dunifi.logdir="/var/log/unifi"  # -Dunifi.logdir="${DIR}/logs" # Ignored?
+	-Dunifi.rundir="/var/run/unifi"  # -Dunifi.rundir="${DIR}/run"
+)
+
+podman_memory_size='large'
+
+PN='unifi' # PN="${RC_SVCNAME:=unifi}"
+PV='@PVR@'
+CATEGORY='net-misc'
+command_opts="${JVM_OPTS[@]:-} ${UNIFI_OPTS[@]:-} -cp ${jar} ${class} start"
+
+dockerimage="service.${CATEGORY}.unifi-controller-bin:${PV}"
+start_stop_daemon_wait=30000
+
+container_dir_owner='unifi'
+container_dir_run_mode='0750'
+container_dir_log_mode='0775'
+
+container_svc_wait=15
+container_use_pid=0
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add NET_RAW
+
+	--network host
+	# TODO: Check whether system.properties has changed these defaults...
+	#--publish 8080:8080/tcp  # Device inform
+	#--publish 8443:8443/tcp  # Controller UI/API
+	#--publish 8880:8880/tcp  # Portal redirect for HTTP
+	#--publish 8843:8843/tcp  # Portal redirect for HTTPS
+	#--publish 8881:8881/tcp  # Device redirector
+	#--publish 8881:8882/tcp  # Device redirector (wired)
+	#--publish 6789:6789/tcp  # Throughput measurement
+	#--publish 3478:3478/udp  # STUN
+	#--publish 127.0.0.1:${MONGOPORT}:${MONGOPORT}/tcp
+)
+
+dockermounts=(
+	${dockermount_syslog}
+
+	${dockermount_ssl}
+
+	${dockermount_lib}
+	${dockermount_log}
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/lib/${PN}/logs/
+	--mount type=bind,source=/var/log/${PN}/,destination=/var/lib/${PN}/data/webrtc/logs/
+	${dockermount_run}
+)
+
+_containers_set_args
+
+name="containerised Ubiquiti UniFi Controller"
+#command_user="unifi:unifi"
+retry='TERM/10/KILL/2'
+command_progress='true'
+
+description="Ubiquiti UniFi Controller software"
+extra_commands="info"
+extra_stopped_commands="inspect"
+description_inspect="Launch container interactively"
+description_info="Show basic build/configuration data"
+
+
+depend() {
+	need containers
+}
+
+inspect() {
+	_containers_check_paths || return ${?}
+
+	_containers_inspect
+}
+
+start_pre() {
+	local id='' dr_id=''
+	local -i update=0 rc=0 rcc=0
+
+	_containers_check_paths || return ${?}
+
+	_containers_start_pre || return ${?}
+
+	if yesno "${REPLACE_CERT:-no}"; then
+		einfo "Checking ${RC_SVCNAME} certificate ..."
+
+		if ! command -v openssl >/dev/null 2>&1; then
+			eerror "Cannot execute 'openssl' - not updating SSL" \
+				"certificate"
+		elif
+			echo "${PRIVATE_KEY:-}" |
+			grep -q '^/var/lib/unifi/certs/'
+		then
+			error "Private key must exist outside of" \
+				"'/var/lib/unifi/certs/' - not updating SSL" \
+				"certificate"
+		elif ! [ -s "${PRIVATE_KEY:-}" ]; then
+			eerror "Cannot read private key '${PRIVATE_KEY:-}' -" \
+				"not updating SSL certificate"
+		elif ! [ -s "${CA_CHAIN:-}" ]; then
+			eerror "Cannot read CA chain '${CA_CHAIN:-}' - not" \
+				"updating SSL certificate"
+		else
+			key="$( basename "${PRIVATE_KEY}" )"
+			update=1
+			if ! cp "${PRIVATE_KEY}" "/var/lib/unifi/certs/${key}"
+			then
+				eerror "Failed to copy private key" \
+					"'${PRIVATE_KEY}' to" \
+					"'/var/lib/unifi/certs/': ${?}"
+				update=0
+			elif
+				[ -s "/var/lib/unifi/certs/${key}" ] &&
+				[ -s "/var/lib/unifi/certs/${key}.md5" ]
+			then
+				if
+					md5sum -c "/var/lib/unifi/certs/${key}.md5" \
+					>/dev/null 2>&1
+				then
+					einfo "SSL certificate unchanged -" \
+						"not updating"
+					update=0
+				fi
+			fi
+		fi
+		if (( update )); then
+			local ALIAS='unifi'
+			local PASSWORD='aircontrolenterprise'
+
+			einfo "Updating ${RC_SVCNAME} certificate ..."
+
+			#cp "${PRIVATE_KEY}" /var/lib/unifi/certs/
+			cp "${CA_CHAIN}" /var/lib/unifi/certs/
+
+			if [ -s /var/lib/unifi/data/keystore ]; then
+				suffix="$( date +'%s' )"
+				einfo "Creating keystore backup as" \
+					"'keystore.${suffix}'"
+				cp /var/lib/unifi/data/keystore \
+					"/var/lib/unifi/data/keystore.${suffix}"
+			fi
+			PKCS12="$(
+				mktemp -p /var/lib/unifi/certs/ \
+					unifi.pkcs12.XXXX
+			)" || {
+				eerror "mktemp failed: ${?}"
+				rm "/var/lib/unifi/data/keystore.${suffix}"
+				return ${?}
+			}
+			chmod 0664 "${PKCS12}"
+			chmod 0644 /var/lib/unifi/data/keystore
+			chown unifi:unifi "${PKCS12}" \
+				/var/lib/unifi/data/keystore
+
+			local -a openssl_args=(
+				pkcs12
+				-export
+				-in "${CA_CHAIN}"
+				-inkey "${PRIVATE_KEY}"
+				-out "${PKCS12}"
+				-passout pass:"${PASSWORD}"
+				-name "${ALIAS}"
+			)
+			openssl "${openssl_args[@]}" || {
+				eerror "openssl failed: ${?}"
+				rm "/var/lib/unifi/data/keystore.${suffix}" \
+					"${PKCS12}"
+				return ${?}
+			}
+
+			ebegin "Replacing UniFi Controller SSL certificate"
+			docker run "${dockeropts[@]}" "${dockermounts[@]}" \
+					--cap-drop ALL			   \
+					--entrypoint '/bin/sh'		   \
+					--memory 512m			   \
+					--memory-reservation 256m	   \
+					--memory-swap 1g		   \
+					--name "${container_name}-keytool" \
+					--network none			   \
+					--replace			   \
+					--restart no			   \
+					--rm				   \
+				"${dockerimage}" -c "
+			keytool -list				 	   \
+				-alias ${ALIAS}				   \
+				-keystore /var/lib/unifi/data/keystore	   \
+				-storepass ${PASSWORD}			   \
+			>/dev/null 2>&1 &&				   \
+			keytool -delete					   \
+				-alias ${ALIAS}				   \
+				-keystore /var/lib/unifi/data/keystore	   \
+				-storepass ${PASSWORD}			   \
+			>/dev/null 2>&1 ;				   \
+			keytool -importkeystore				   \
+				-srckeystore "${PKCS12}"		   \
+				-srcstoretype PKCS12			   \
+				-srcstorepass "${PASSWORD}"		   \
+				-destkeystore /var/lib/unifi/data/keystore \
+				-deststorepass "${PASSWORD}"		   \
+				-destkeypass "${PASSWORD}"		   \
+				-srcalias "${ALIAS}"			   \
+				-noprompt				   \
+			>/dev/null 2>&1
+				"
+			rc=${?}
+
+			if dr_id="$(
+				docker ps -a |
+				grep -- "\s${container_name}-keytool$" |
+				awk '{ prnt $1 }'
+			)" && [ -n "${dr_id:-}" ]; then
+				if [ "$(
+					type -t docker 2>dev/null
+				)" = 'function' ]; then
+					: $(( rcc = $(
+						docker inspect \
+							--format '{{.State.ExitCode}}' \
+							"${dr_id}" 2>/dev/null ||
+						echo "${?}"
+					) ))
+				else
+					: $(( rcc = $(
+						docker inspect \
+							--format '{{.State.ExitCode}}' \
+							"${dr_id}" 2>/dev/null ||
+						echo "${?}"
+					) ))
+				fi
+			fi
+
+			if [ -n "${rcc:-}" ] && [ "${rc}" -ne "${rcc}" ]; then
+				if [ "${rc}" -gt "${rcc}" ]; then
+					ewarn "Return code (${rc}) differs" \
+						"from container exit code" \
+						"(${rcc}) - proceeding with" \
+						"former ..."
+				else
+					ewarn "Return code (${rc}) differs" \
+						"from container exit code" \
+						"(${rcc}) - proceeding with" \
+						"latter ..."
+					rc=${rcc}
+				fi
+			else
+				veinfo "'${docker} run' returned '${rc}'"
+			fi
+
+			eend ${rc} "keytool failed: ${rc}"
+
+			if (( rc )); then
+				ebegin "Restoring keychain backup"
+				mv "/var/lib/unifi/data/keystore.${suffix}" \
+					"/var/lib/unifi/data/keystore"
+				eend ${?}
+			else
+				md5sum "/var/lib/unifi/certs/${key}" > \
+					"/var/lib/unifi/certs/${key}.md5"
+			fi
+			rm "${PKCS12}"
+			unset PKCS12
+		fi
+	fi
+}
+
+info() {
+	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
+	_containers_check_paths || return ${?}
+
+	ebegin "Checking UniFi Controller status"
+	if service_started; then
+		docker exec "${container_name}" \
+			java \
+				${JVM_OPTS[@]:-} \
+				${UNIFI_OPTS[@]:-} \
+				-cp ${jar} \
+				${class} \
+				info
+	else
+		docker run "${dockeropts[@]}" "${dockermounts[@]}" \
+				--cap-drop ALL \
+				--name "${container_name}-info" \
+				--network none \
+				--replace \
+				--restart no \
+				--rm \
+			"${dockerimage}" \
+				${JVM_OPTS[@]:-} \
+				${UNIFI_OPTS[@]:-} \
+				-cp ${jar} \
+				${class} \
+				info
+	fi
+	eend ${?} "Status check failed"
+}
+
+stop() {
+	su - unifi -s /bin/sh -c 'touch /var/run/unifi/server.stop'
+
+	default_stop
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:

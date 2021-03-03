@@ -2,6 +2,27 @@
 # Copyright 1999-2019 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
+# Tiny
+#: ${PODMAN_MEMORY_RESERVATION:=256m}
+#: ${PODMAN_MEMORY_LIMIT:=512m}
+#: ${PODMAN_SWAP_LIMIT:=1g}
+# Small
+#: ${PODMAN_MEMORY_RESERVATION:=512m}
+#: ${PODMAN_MEMORY_LIMIT:=1g}
+#: ${PODMAN_SWAP_LIMIT:=2g}
+# Medium
+#: ${PODMAN_MEMORY_RESERVATION:=1g}
+#: ${PODMAN_MEMORY_LIMIT:=2g}
+#: ${PODMAN_SWAP_LIMIT:=4g}
+# Large
+: ${PODMAN_MEMORY_RESERVATION:=2g}
+: ${PODMAN_MEMORY_LIMIT:=4g}
+: ${PODMAN_SWAP_LIMIT:=8g}
+# Extra-Large
+#: ${PODMAN_MEMORY_RESERVATION:=4g}
+#: ${PODMAN_MEMORY_LIMIT:=8g}
+#: ${PODMAN_SWAP_LIMIT:=16g}
+
 DIR="${UNIFI_DIR:-%INST_DIR%}"
 class="com.ubnt.ace.Launcher"
 jar="${DIR}/lib/ace.jar"
@@ -25,6 +46,10 @@ dockeropts=(
 
 	--cap-drop ALL
 	--cap-add NET_RAW
+
+	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
 
 	--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log
 
@@ -50,6 +75,7 @@ dockeropts=(
 	#--publish 127.0.0.1:${MONGOPORT}:${MONGOPORT}/tcp
 
 	#--hostname "$( hostname -s )"
+	--init
 	--interactive
 	--name "openrc-${PN}-${PV}"
 	--restart on-failure
@@ -146,8 +172,12 @@ start_pre() {
 	[ -e "/var/run/${PN}/${RC_SVCNAME}.pid" ] && rm "/var/run/${PN}/${RC_SVCNAME}.pid" || :
 
 	if yesno "${REPLACE_CERT:-no}"; then
+		einfo "Checking ${RC_SVCNAME} certificate ..."
+
 		if ! command -v openssl >/dev/null 2>&1; then
 			eerror "Cannot execute 'openssl' - not updating SSL certificate"
+		elif echo "${PRIVATE_KEY:-}" | grep -q '^/var/lib/unifi/certs/'; then
+			error "Private key must exist outside of '/var/lib/unifi/certs/' - not updating SSL certificate"
 		elif ! [ -s "${PRIVATE_KEY:-}" ]; then
 			eerror "Cannot read private key '${PRIVATE_KEY:-}' - not updating SSL certificate"
 		elif ! [ -s "${CA_CHAIN:-}" ]; then
@@ -155,7 +185,10 @@ start_pre() {
 		else
 			key="$( basename "${PRIVATE_KEY}" )"
 			update=1
-			if [ -s "/var/lib/unifi/certs/${key}" ] && [ -s "/var/lib/unifi/certs/${key}.md5" ]; then
+			if ! cp "${PRIVATE_KEY}" "/var/lib/unifi/certs/${key}"; then
+				eerror "Failed to copy private key '${PRIVATE_KEY}' to '/var/lib/unifi/certs/': ${?}"
+				update=0
+			elif [ -s "/var/lib/unifi/certs/${key}" ] && [ -s "/var/lib/unifi/certs/${key}.md5" ]; then
 				if md5sum -c "/var/lib/unifi/certs/${key}.md5" >/dev/null 2>&1; then
 					einfo "SSL certificate unchanged - not updating"
 					update=0
@@ -166,7 +199,9 @@ start_pre() {
 			local ALIAS='unifi'
 			local PASSWORD='aircontrolenterprise'
 
-			cp "${PRIVATE_KEY}" /var/lib/unifi/certs/
+			einfo "Updating ${RC_SVCNAME} certificate ..."
+
+			#cp "${PRIVATE_KEY}" /var/lib/unifi/certs/
 			cp "${CA_CHAIN}" /var/lib/unifi/certs/
 
 			if [ -s /var/lib/unifi/data/keystore ]; then
@@ -201,6 +236,9 @@ start_pre() {
 			ebegin "Replacing UniFi Controller SSL certificate"
 			docker run "${dockeropts[@]}"					\
 					--cap-drop ALL					\
+					--memory-reservation 256m			\
+					--memory 512m					\
+					--memory-swap 1g				\
 					--name "openrc-${PN}-${PV}-keytool"		\
 					--replace					\
 					--restart no					\
