@@ -1,4 +1,4 @@
-# Copyright 2021 Gentoo Authors
+# Copyright 2021 Stuart Shelton
 # Distributed under the terms of the GNU General Public License v2
 
 # A note on ordering:
@@ -108,7 +108,11 @@ dockeropts+=(
 
 #shellcheck disable=SC2034
 {
-dockermount_syslog='--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log'
+if [ -e /var/run/syslog-ng/log ]; then
+	dockermount_syslog='--mount type=bind,source=/var/run/syslog-ng/log,destination=/dev/log'
+elif [ -e /var/run/metalog/log ]; then
+	dockermount_syslog='--mount type=bind,source=/var/run/metalog/log,destination=/dev/log'
+fi
 dockermount_etc="--mount type=bind,source=/etc/${PN}/,destination=/etc/${PN}/"
 dockermount_lib="--mount type=bind,source=/var/lib/${PN},destination=/var/lib/${PN}"
 dockermount_log="--mount type=bind,source=/var/log/${PN},destination=/var/log/${PN}"
@@ -169,9 +173,25 @@ _containers_set_args() {
 		${dockervolumes[@]:-}
 		${dockerports[@]:-}
 	)
+	command_docker_pid_args=(
+		--conmon-pidfile="${pidfile%.pid}.conmon.pid"
+		--cidfile="${pidfile%.pid}.cid"
+
+		# New with podman-3.2.0, we could use:
+		#--pidfile="${pidfile%.pid}.init.pid"
+		# ... to record the host PID of the container's PID 1.  We are
+		# determining this PID ourselves with logic below, which _may_
+		# give better tracking in the event of a non-clean startup.
+	)
+	command_docker_daemon_args=(
+		--systemd=false
+		--sdnotify=conmon
+	)
 	#shellcheck disable=SC2034,SC2116,SC2154
 	command_args="run $( echo "${command_docker_args[*]:-}" \
-		"${dockerimage}" \
+		"${command_docker_pid_args[*]:-}" \
+		"${command_docker_daemon_args[*]:-}" \
+		"localhost/${dockerimage}" \
 		"${command_opts:+${command_opts/\%PID\%/${container_svc_pid}}}"
 	)"
 
@@ -241,7 +261,7 @@ _containers_inspect() {
 			--replace \
 			--restart no \
 			--rm \
-		"${dockerimage}"
+		"localhost/${dockerimage}"
 } # _containers_inspect
 
 _containers_start_pre() {
@@ -257,6 +277,11 @@ _containers_start_pre() {
 	then
 		eerror "Container image '${dockerimage}' not found"
 		return 1
+	fi
+	if [ -e "${pidfile%.pid}.cid" ]; then
+		ewarn "Stale Container ID file '${pidfile%.pid}.cid' still" \
+			"exists - removing..."
+		rm -f "${pidfile%.pid}.cid"
 	fi
 
 	if [ -n "${container_use_git:-}" ] && [ "${container_use_git}" != "0" ]; then
@@ -309,14 +334,15 @@ _containers_start_post() {
 
 	local -i wait=${container_svc_wait}
 	local -i expect_pid=${container_use_pid}
-	local -i count=0 oldpid=0 pid=0 have_pid=0
+	local -i factor=1 count=0 oldpid=0 pid=0 have_pid=0
 	local sleep='1'
 	local pid_file="${container_svc_pid:-}"
 	local pid_dir="${container_svc_pid_dir:-}"
 
 	if sleep 0.1 >/dev/null 2>&1; then
 		sleep='0.1'
-		: $(( wait = wait * 10 ))
+		: $(( factor = 10 ))
+		: $(( wait = wait * factor ))
 	fi
 
 	if [ $(( expect_pid )) -eq 1 ]; then
@@ -327,6 +353,8 @@ _containers_start_post() {
 		if ! [ -s "${pid_file}" ]; then
 			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
 		else
+			service_set_value 'startup_ticks' "${count}"
+			service_set_value 'startup_factor' "${factor}"
 			have_pid=1
 		fi
 	else
@@ -413,6 +441,14 @@ _containers_status() {
 		return ${status}
 	fi
 
+	if
+		! docker image ls "localhost/${dockerimage}" 2>/dev/null |
+		grep -Fq -- 'localhost'
+	then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+
 	entry="$( podman ps -a \
 		--filter "name=${container_name}" \
 		--format '{{.ID}}!{{.ImageID}}!{{.Status}}!{{.CreatedAt}}!{{.RunningFor}}!{{.Mounts}}!{{.Labels}}'
@@ -420,9 +456,10 @@ _containers_status() {
 		#--size \
 	)"
 	if [ -z "${entry:-}" ]; then
-		eerror "podman has no data on this container"
+		eerror "podman has no data on container '${container_name}'"
 	else
 		local id image state created running mounts labels # size
+		local -i factor=1 ticks=0
 		while IFS='!' read -r id image state created running mounts labels; do # size
 			state="$( cut -d' ' -f 1 <<<"${state:-}" )"
 			created="$( cut -d'.' -f 1 <<<"${created:-}" | awk '{ print $2, $1 }' )"
@@ -434,6 +471,15 @@ _containers_status() {
 			fi
 			$output ''
 			$output "Image:  ${image:--}, ID: ${id:--}: (${state:-Unknown})${created:+ created ${created}}${running:+ running for ${running}}"
+			if [ -n "$( service_get_value 'startup_factor' )" ] && [ -n "$( service_get_value 'startup_ticks' )" ]; then
+				: $(( factor = $( service_get_value 'startup_factor' ) ))
+				: $(( ticks = $( service_get_value 'startup_ticks' ) ))
+				case ${factor} in
+					1)	$output "        PID file appeared in ${ticks} seconds" ;;
+					10)	$output "        PID file appeared in ${ticks} deciseconds ($(( ticks / factor )) seconds)" ;;
+					*)	$output "        PID file appeared in ${ticks} ticks (factor ${factor})" ;;
+				esac
+			fi
 			#$output "Size:   ${size}"
 			if [ -n "${labels:-}" ]; then
 				$output ''
@@ -504,8 +550,8 @@ _containers_reload() {
 
 	# N.B. oldpid should be the host PID, not the PID within the container...
 	if [ -s "${pid_file}" ]; then
-		: $(( oldpid = $( awk '{ print $1 }' < "${pid_file}" 2>/dev/null) ))
-	fi
+		: $(( oldpid = $( awk '{ print $1 }' < "${pid_file}" ) ))
+	fi 2>/dev/null
 	if [ -z "${oldpid:-}" ] || [ $(( oldpid )) -lt 301 ]; then
 		: $(( oldpid = 0 ))
 		if [ $(( container_change_pid )) -eq 1 ]; then
@@ -547,21 +593,20 @@ _containers_reload() {
 	pid=0
 
 	while [ $(( oldpid )) -eq "$(
-		awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
+		awk '{ print $1 }' < "${pid_file}" || echo '0'
 	)" ] && [ $(( count )) -lt $(( wait )) ]; do
 		sleep ${sleep}
 		: $(( count = count + 1 ))
-	done
+	done 2>/dev/null
 
 	if [ $(( oldpid )) -eq "$(
-		awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
+		awk '{ print $1 }' < "${pid_file}" || echo '0'
 	)" ]; then
 		eerror "Timed-out waiting for reloaded '${RC_SVCNAME}' PID in file '${pid_file}'"
 	else
 		veinfo "Service '${RC_SVCNAME}' changed from host PID" \
 			"'${oldpid}' to container PID $(
-				awk '{ print $1 }' < "${pid_file}" 2>/dev/null ||
-				echo '0'
+				awk '{ print $1 }' < "${pid_file}" || echo '0'
 			)"
 		have_pid=1
 	fi
@@ -589,7 +634,7 @@ _containers_reload() {
 				echo "${pid}" > "${pid_file}"
 			else
 				: $(( oldpid = $(
-					awk '{ print $1 }' < "${pid_file}" 2>/dev/null ||
+					awk '{ print $1 }' < "${pid_file}" ||
 					echo '0'
 				) + 0 ))
 				if ! [ $(( oldpid )) -eq "${pid}" ]; then
@@ -609,6 +654,7 @@ _containers_reload() {
 
 _containers_stop_post() {
 	local id=''
+	local -i pid=0
 
 	set -u
 
@@ -623,6 +669,17 @@ _containers_stop_post() {
 			docker rm --volumes "${id}" >/dev/null 2>&1
 		fi
 	fi
+
+	if [ -s "${pidfile%.pid}.conmon.pid" ]; then
+		pid="$( cat "${pidfile%.pid}.conmon.pid" 2>/dev/null )"
+		if [ $(( pid )) -gt 300 ]; then
+			if [ -e "/proc/${pid}/exe" ] && readlink -e "/proc/${pid}/exe" | grep -q -- '/conmon$'; then
+				ewarn "monitor for service '${RC_SVCNAME}' container still running as PID ${pid}"
+			fi
+		fi
+	fi
+	test ! -e "${pidfile%.pid}.conmon.pid" || rm "${pidfile%.pid}.conmon.pid"
+	test ! -e "${pidfile%.pid}.cid" || rm "${pidfile%.pid}.cid"
 
 	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
 		test ! -e "${container_svc_pid:-}" || rm "${container_svc_pid}"

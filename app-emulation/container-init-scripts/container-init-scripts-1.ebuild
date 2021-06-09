@@ -13,6 +13,7 @@ KEYWORDS="amd64 arm arm64 x86"
 S="${WORKDIR}"
 
 src_install() {
-	newinitd "${FILESDIR}"/init-common-202102199 _containers_common
+	newinitd "${FILESDIR}"/containers.initd containers
+	newinitd "${FILESDIR}"/common.initd _containers_common
 	fperms 0644 /etc/init.d/_containers_common
 }

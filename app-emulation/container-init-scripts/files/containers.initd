@@ -1,0 +1,87 @@
+#!/sbin/openrc-run
+# Copyright 2020 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+name="container preparation"
+extra_commands="prune"
+description_prune="Prune container system"
+description="Prepare the system for docker/podman container-running"
+
+depend() {
+	need localmount lvm net
+	use docker podman
+}
+
+_get_runner() {
+	if command -v podman >/dev/null 2>&1; then
+		docker() { podman ${@+"${@}"} ; }
+		export -f docker
+	elif command -v docker >/dev/null 2>&1; then
+		:
+	else
+		eerror "Could not find container runner"
+		return 1
+	fi
+}
+
+_clean() {
+	local actions="${1:-}"
+
+	ebegin "Resetting container environment configuration"
+
+	# With podman, 'system prune' isn't recursive :(
+	#while (( 2 != $( (
+	#	docker system prune -f | sed 's/^/   /' | tee /dev/tty0 2>/dev/null || :
+	#) | wc -l ) )); do
+	#	:
+	#done
+	docker system prune --force
+	if command -v buildah >/dev/null 2>&1; then
+		buildah rm --all
+		buildah rmi --prune
+	fi
+	[ -n "${actions:-}" ] && [ 'netns' = "${actions}" ] && ip -all netns del
+
+	eend 0
+}
+
+# Somehow, if a stage isn't defined here but is defined in another (container-
+# based?) init script, then that function is called when this init script runs,
+# although without any global variables associated with the actual script?!
+
+start_pre() {
+	_get_runner
+}
+
+start() {
+	if [ -e .block_containers ]; then
+		eerror "Not loading container services"
+		ewarn "Remove /.block_containers to resume operation"
+		return 1
+	fi
+	_clean netns
+}
+
+start_post() {
+	:
+}
+
+stop_pre() {
+	_get_runner
+}
+
+stop() {
+	docker stop --all
+
+	_clean netns
+}
+
+stop_post() {
+	:
+}
+
+prune() {
+	_get_runner || return ${?}
+	_clean
+}
+
