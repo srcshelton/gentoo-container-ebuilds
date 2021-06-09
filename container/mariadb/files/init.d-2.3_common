@@ -8,8 +8,15 @@
 : ${STOP_TIMEOUT:=120}
 
 get_config() {
-	my_print_defaults --defaults-file="$1" mysqld server mariadb |
-		sed -n -e "s/^--$2=//p"
+	# my_print_defaults is deployed to /usr/bin, and links to
+	# /usr/lib64/libstdc++.so - so it's not available early-boot...
+	if ! command -v my_print_defaults >/dev/null 2>&1; then
+		grep -h -- "${2}" "${1}" /etc/"${RC_SVCNAME}"/*.d/*.cnf |
+			sed 's/^.*=\s*//'
+	else
+		my_print_defaults --defaults-file="$1" mysqld server mariadb |
+			sed -n -e "s/^--$2=//p"
+	fi
 }
 
 mysql_svcname() {
@@ -128,7 +135,7 @@ checkconfig() {
 					--replace \
 					--restart no \
 					--rm \
-				"${dockerimage}" --defaults-file="${my_cnf}" \
+				"localhost/${dockerimage}" --defaults-file="${my_cnf}" \
 					--help --verbose > /dev/null
 		fi
 	else
@@ -146,7 +153,7 @@ checkconfig() {
 					--replace \
 					--restart no \
 					--rm \
-				"${dockerimage}" --defaults-file="${my_cnf}" \
+				"localhost/${dockerimage}" --defaults-file="${my_cnf}" \
 					--help --verbose > /dev/null 2>&1
 		fi
 
@@ -166,7 +173,7 @@ checkconfig() {
 						--replace \
 						--restart no \
 						--rm \
-					"${dockerimage}" --defaults-file="${my_cnf}" \
+					"localhost/${dockerimage}" --defaults-file="${my_cnf}" \
 						--help --verbose > /dev/null
 			fi
 		fi
@@ -336,7 +343,7 @@ init_mysql_database() {
 			--restart no \
 			--rm \
 			--user root:root \
-		"${dockerimage}" -c "${DOCKER_SCRIPT}"
+		"localhost/${dockerimage}" -c "${DOCKER_SCRIPT}"
 }
 
 # vi: set filetype=gentoo-init-d colorcolumn=80:

@@ -10,12 +10,12 @@ inherit prefix
 
 HOMEPAGE="https://mariadb.org/"
 DESCRIPTION="An enhanced, drop-in replacement for MySQL"
-#PATCH_SET="https://dev.gentoo.org/~whissi/dist/${PN}/${PN}-10.5.8-patches-01.tar.xz"
+#PATCH_SET="https://dev.gentoo.org/~whissi/dist/${PN}/${PN}-10.5.9-patches-02.tar.xz"
 #SRC_URI="https://downloads.mariadb.org/interstitial/${P}/source/${P}.tar.gz
 #	${PATCH_SET}"
 
 LICENSE="GPL-2 LGPL-2.1+"
-KEYWORDS="~alpha ~amd64 ~arm ~arm64 ~hppa ~ia64 ~mips ~ppc ~ppc64 ~s390 ~sparc ~x86 ~amd64-linux ~x86-linux ~ppc-macos ~x64-macos ~x64-solaris ~x86-solaris"
+KEYWORDS="~alpha amd64 ~arm ~arm64 ~hppa ~ia64 ~mips ~ppc ~ppc64 ~s390 ~sparc x86 ~amd64-linux ~x86-linux ~ppc-macos ~x64-macos ~x64-solaris ~x86-solaris"
 #IUSE="+backup bindist columnstore cracklib debug extraengine galera innodb-bzip2 innodb-lz4 innodb-lzma innodb-lzo innodb-snappy jdbc jemalloc kerberos latin1 libressl mroonga numa odbc oqgraph pam +perl profiling rocksdb selinux +server sphinx sst-mariabackup sst-rsync static systemd systemtap s3 tcmalloc test xml yassl"
 IUSE="latin1 +server"
 SUBSLOT="18"
