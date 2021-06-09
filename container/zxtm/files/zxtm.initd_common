@@ -17,6 +17,7 @@ container_svc_pid="/var/run/zeus/zxtm/internal/pid"
 container_svc_pid_dir="/var/run/zeus/zxtm"
 
 container_svc_wait=20
+retry='TERM/15/KILL/2'
 
 . /etc/init.d/_containers_common || return ${?}
 
