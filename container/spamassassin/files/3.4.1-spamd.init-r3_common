@@ -169,7 +169,7 @@ update() {
 			--replace \
 			--restart no \
 			--rm \
-		"${dockerimage}" || rc=${?}
+		"localhost/${dockerimage}" || rc=${?}
 
 	return ${rc}
 }
