@@ -173,7 +173,7 @@ checkconfig() {
 				--replace \
 				--restart no \
 				--rm \
-			"${dockerimage}" -t -f "${LIGHTTPD_CONF}" \
+			"localhost/${dockerimage}" -t -f "${LIGHTTPD_CONF}" \
 				>/dev/null 2>/dev/null
 	elif service_started; then
 		docker exec "${container_name}" \
@@ -186,7 +186,7 @@ checkconfig() {
 				--replace \
 				--restart no \
 				--rm \
-			"${dockerimage}" -tt -f "${LIGHTTPD_CONF}"
+			"localhost/${dockerimage}" -tt -f "${LIGHTTPD_CONF}"
 	fi
 	eend ${?} "Configuration check failed: ${?}"
 }
@@ -246,7 +246,7 @@ start_pre() {
 				--network none \
 				--replace \
 				--restart no \
-			"${CONTENT_IMAGE}"
+			"localhost/${CONTENT_IMAGE}"
 		eend ${?} "Launching container" \
 			"'${container_name_root}.web-content' from image" \
 			"'${CONTENT_IMAGE}' via service '${RC_SVCNAME}'" \
@@ -274,7 +274,7 @@ clean() {
 	#		--restart no \
 	#		--rm \
 	#		--entrypoint=/bin/sh \
-	#	"${dockerimage}" -c /etc/cron.daily/dccd
+	#	"localhost/${dockerimage}" -c /etc/cron.daily/dccd
 	docker exec "${container_name}" /etc/cron.daily/dccd
 }
 
