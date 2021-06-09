@@ -13,7 +13,7 @@ KEYWORDS="amd64 ~ppc x86"
 #RESTRICT="mirror"
 SLOT="0"
 
-BDEPEND="container/spamassassin:="
+DEPEND="container/spamassassin:="
 RDEPEND="${BDEPEND}
 	|| ( app-emulation/podman app-emulation/docker )
 	app-emulation/container-init-scripts"

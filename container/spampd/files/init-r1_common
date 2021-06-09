@@ -86,7 +86,7 @@ description_clean="run DCC maintenance"
 
 
 depend() {
-	use containers
+	need containers
 	use logger mysql postgresql
 	before mta
 }
@@ -153,7 +153,7 @@ update() {
 			--replace \
 			--restart no \
 			--rm \
-		"${dockerimage}" || rc=${?}
+		"localhost/${dockerimage}" || rc=${?}
 
 	return ${rc}
 }
