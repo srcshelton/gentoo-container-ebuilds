@@ -57,7 +57,7 @@ description="A persistent caching system, key-value and data structures database
 
 depend() {
 	need containers
-	use localmount logger
+	use logger
 	after keepalived redis
 }
 
