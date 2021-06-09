@@ -163,7 +163,7 @@ checkconfig() {
 				--replace \
 				--restart no \
 				--rm \
-			"${dockerimage}" ${CONF_PARAM} check || rc=${?}
+			"localhost/${dockerimage}" ${CONF_PARAM} check || rc=${?}
 	fi
 	} 2>&1 |
 	grep --line-buffered --invert-match --fixed-strings ': warning: '
