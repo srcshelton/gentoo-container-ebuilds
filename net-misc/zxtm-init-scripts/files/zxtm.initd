@@ -12,7 +12,8 @@ pidfile="${ZXTM_CHROOT:+${ZXTM_CHROOT%%/}/}${ZEUSHOME%%/}/zxtm/internal/pid"
 #product_owner='Zeus'
 #product_owner='Riverbed'
 #product_owner='Brocade'
-product_owner='Pulse Secure'
+#product_owner='Pulse Secure'
+product_owner='Ivanti'
 
 name="${product_owner} Virtual Traffic Manager"
 description="${product_owner} VTM proides Load Balancer and Traffic Management capabilities"
