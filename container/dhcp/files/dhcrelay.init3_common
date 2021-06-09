@@ -9,7 +9,8 @@ PNV="${RC_SVCNAME}"
 PV='@PVR@'
 CATEGORY='net-misc'
 container_entrypoint='/usr/sbin/dhcrelay'
-command_opts="-q -d -pf %PID% ${DHCRELAY_OPTS} ${DHCRELAY_SERVERS}"
+command_opts="$( echo "-q -d -pf %PID% ${DHCRELAY_OPTS} ${DHCRELAY_SERVERS}" \
+	"${IFACE:+-i ${IFACE}}" )"
 
 container_dir_owner='dhcp'
 
@@ -49,13 +50,9 @@ start_pre() {
 	unset container_use_git
 
 	if [ -z "${DHCRELAY_SERVERS:-}" ] ; then
-		eerror "No DHCRELAY_SERVERS specified in /etc/conf.d/${RC_SVCNAME}"
+		eerror "No DHCRELAY_SERVERS specified in" \
+			"/etc/conf.d/${RC_SVCNAME}"
 		return 1
-	fi
-
-	if [ -n "${IFACE:-}" ] ; then
-		iface_opts=$(printf -- '-i %s ' ${IFACE})
-		command_args="${command_args} $( printf -- '-i %s ' ${IFACE} )"
 	fi
 
 	_containers_check_paths || return${?}
