@@ -16,6 +16,7 @@ KEYWORDS="~alpha amd64 arm arm64 hppa ~ia64 ~mips ppc ppc64 s390 sparc x86"
 
 RDEPEND="
 	|| ( app-emulation/podman app-emulation/docker )
+	app-emulation/container-init-scripts
 	acct-group/openntpd
 	acct-user/openntpd"
 
@@ -24,7 +25,7 @@ S="${WORKDIR}"
 src_prepare() {
 	local f
 
-	for f in "${PN}.init.d-20080406-r6"; do
+	for f in "${PN}.init.d-20080406-r6_common"; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -34,7 +35,7 @@ src_prepare() {
 }
 
 src_install() {
-	newinitd "${T}/${PN}.init.d-20080406-r6" ntpd
+	newinitd "${T}/${PN}.init.d-20080406-r6_common" ntpd
 	newconfd "${FILESDIR}/${PN}.conf.d-20080406-r6" ntpd
 
 	insinto "/etc/${PN}"
