@@ -2,7 +2,7 @@
 # Copyright 1999-2019 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
-DIR="${UNIFI_DIR:-/opt/unifi-controller-6.0.45}"
+DIR="${UNIFI_DIR:-/opt/unifi-controller-@PVR@}"
 class="com.ubnt.ace.Launcher"
 jar="${DIR}/lib/ace.jar"
 
@@ -32,7 +32,7 @@ UNIFI_OPTS=(
 podman_memory_size='large'
 
 PN='unifi' # PN="${RC_SVCNAME:=unifi}"
-PV='6.0.45'
+PV='@PVR@'
 CATEGORY='net-misc'
 command_opts="${JVM_OPTS[@]:-} ${UNIFI_OPTS[@]:-} -cp ${jar} ${class} start"
 
@@ -228,7 +228,7 @@ start_pre() {
 					--replace			   \
 					--restart no			   \
 					--rm				   \
-				"${dockerimage}" -c "
+				"localhost/${dockerimage}" -c "
 			keytool -list				 	   \
 				-alias ${ALIAS}				   \
 				-keystore /var/lib/unifi/data/keystore	   \
@@ -337,7 +337,7 @@ info() {
 				--replace \
 				--restart no \
 				--rm \
-			"${dockerimage}" \
+			"localhost/${dockerimage}" \
 				${JVM_OPTS[@]:-} \
 				${UNIFI_OPTS[@]:-} \
 				-cp ${jar} \
