@@ -110,7 +110,7 @@ checkconfig() {
 				--replace \
 				--restart no \
 				--rm \
-			${dockerimage} "${NAMED_CONF}" || rc=${?}
+			"localhost/${dockerimage}" "${NAMED_CONF}" || rc=${?}
 	fi
 	if [ $(( rc )) -ne 0 ]; then
 		eerror "named-checkconf failed! Please fix your config first."
@@ -139,7 +139,7 @@ checkzones() {
 				--replace \
 				--restart no \
 				--rm \
-			"${dockerimage}" -z -j "${NAMED_CONF}" || rc=${?}
+			"localhost/${dockerimage}" -z -j "${NAMED_CONF}" || rc=${?}
 	fi
 
 	eend ${rc}
@@ -161,7 +161,7 @@ regenerateconfig() {
 				--replace \
 				--restart no \
 				--rm \
-			${dockerimage} /usr/libexec/entrypoint.d/named
+			"localhost/${dockerimage}" /usr/libexec/entrypoint.d/named
 	fi
 } # regenerateconfig
 
