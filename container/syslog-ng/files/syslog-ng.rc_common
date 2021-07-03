@@ -46,6 +46,7 @@ dockeropts+=(
 
 	--workdir "${SYSLOG_NG_STATEFILE_DIR}"
 
+	--hostname "$( hostname -s )"
 	--network host
 	#--publish 514:514/udp
 )
@@ -98,7 +99,7 @@ checkconfig() {
 				--replace \
 				--restart no \
 				--rm \
-			"${dockerimage}" -s -f "${SYSLOG_NG_CONFIGFILE}" || rc=${?}
+			"localhost/${dockerimage}" -s -f "${SYSLOG_NG_CONFIGFILE}" || rc=${?}
 	fi
 	eend ${rc} "Configuration error. Please fix your configfile (${SYSLOG_NG_CONFIGFILE})"
 }
