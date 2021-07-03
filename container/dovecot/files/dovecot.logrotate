@@ -1,14 +1,28 @@
 # Copyright 1999-2019 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
-/var/log/dovecot/deliver.log /var/log/dovecot/debug.log {
+/var/log/dovecot/debug.log /var/log/dovecot/deliver.log {
 	su dovecot mail
-	#delaycompress
+#	delaycompress
 	rotate 5
 	missingok
 	notifempty
 	dateext
-	#size 10M
+#	size 10M
+	sharedscripts
+	postrotate
+		/etc/init.d/syslog-ng reload > /dev/null 2>&1 || true
+	endscript
+}
+
+/var/log/dovecot/dovecot.log {
+	su root root
+#	delaycompress
+	rotate 5
+	missingok
+	notifempty
+	dateext
+#	size 10M
 	sharedscripts
 	postrotate
 		/etc/init.d/syslog-ng reload > /dev/null 2>&1 || true

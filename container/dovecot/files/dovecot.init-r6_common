@@ -159,7 +159,8 @@ start() {
 		dockermounts+=( --mount type=bind,source=/etc/group,destination=/etc/group,ro=true )
 		dockermounts+=( --mount type=bind,source=/etc/shadow,destination=/etc/shadow,ro=true )
 		dockermounts+=( --mount type=bind,source=/etc/gshadow,destination=/etc/gshadow,ro=true )
-		export command_args="run ${dockeropts[*]} ${dockermounts[*]} ${dockerimage} -F -c \"${DOVECOT_CONF}\""
+
+		_containers_set_args  # ...again
 	fi
 
 	default_start
