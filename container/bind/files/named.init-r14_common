@@ -1,0 +1,305 @@
+#!/sbin/openrc-run
+# Copyright 1999-2014 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${NAMED_CONF:=/etc/bind/${RC_SVCNAME}.conf}
+: ${NAMED_PIDFILE:=${PIDFILE:-$( grep pid-file "${NAMED_CONF}" | cut -d'"' -f 2 )}}
+: ${NAMED_NICELEVEL:=0}
+
+podman_memory_size='medium'
+
+PN='bind' # PN="${RC_SVCNAME:=named}"
+PV='@PVR@'
+CATEGORY='net-dns'
+command_opts="-u named ${CPU:+-n ${CPU} }${OPTIONS} -f" # -g -d 9
+
+container_dir_owner='named'
+container_dir_run_mode='0750'
+container_dir_run="$( dirname "${NAMED_PIDFILE}" )"
+container_dir_log='/var/log/named'
+container_dir_lib_mode='0770'
+container_dir_lib_owner='root'
+container_dir_lib_group='named'
+container_dir_lib='/var/bind'
+container_use_git="${NAMED_USE_GIT:-}"
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add NET_BIND_SERVICE
+	--cap-add SETUID
+	--cap-add SETGID
+
+	--network host
+	#--publish 53:53/udp
+	#--publish 53:53/tcp
+	#--publish 127.0.0.1:953:953/tcp
+	#--publish 127.0.0.1:8053:8053/tcp
+)
+
+dockermounts=(
+	${dockermount_syslog}
+
+	# Allow access to DHCP hosts list for DNS auto-generation ...
+	--mount type=bind,source=/etc/dhcp,destination=/etc/dhcp,ro=true
+
+	${dockermount_etc}
+	--mount type=bind,source=/var/${PN},destination=/var/${PN}
+	--mount type=bind,source=/var/log/named,destination=/var/log/named
+	--mount type=bind,source=/var/run/named,destination=/var/run/named
+
+	# debug:
+	#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.sh.service,destination=/usr/libexec/entrypoint.sh
+	#--mount type=bind,source=/opt/containers/docker-gentoo-build/gentoo-base/entrypoint.d/named,destination=/usr/libexec/entrypoint.d/named
+)
+
+_containers_set_args
+
+#command_user="named:named"
+start_stop_daemon_args="$( echo "--wait 1000" \
+	"--nicelevel ${NAMED_NICELEVEL:-0}" \
+	"--stdout /var/log/${RC_SVCNAME}/${command}-${PN}.log" \
+	"--stderr /var/log/${RC_SVCNAME}/${command}-${PN}.log" )"
+
+description="Berkeley Internet Name Domain - Name Server"
+extra_commands="checkconfig checkzones regenerateconfig"
+extra_started_commands="sync reload freeze unfreeze"
+extra_stopped_commands="inspect"
+description_checkconfig="Validate the service's configuration"
+description_checkzones="Validate the service's zone configurations"
+description_regenerateconfig="Regenerate the service's PTR mappings"
+description_sync="Sync and clear journal files"
+description_reload="Reload the service's configuration"
+description_freeze="Commit journaled changes to zone-files and prevent further updates"
+description_unfreeze="Unlock zone-files and allow dynamic updates"
+description_inspect="Launch container interactively"
+
+
+depend() {
+	need containers
+	use logger
+	provide dns
+}
+
+_checkpaths() {
+	_containers_check_paths || return ${?}
+}
+
+checkconfig() {
+	local -i rc=0
+
+	ebegin "Checking named configuration"
+
+	if [ ! -f "${NAMED_CONF}" ] ; then
+		eerror "No ${NAMED_CONF} file exists!"
+		return 1
+	fi
+
+	_checkpaths || return ${?}
+
+	if service_started; then
+		docker exec "${container_name}" \
+			named-checkconf "${NAMED_CONF}" || rc=${?}
+	else
+		docker run "${command_docker_args[@]:-}" \
+				--cap-drop ALL \
+				--entrypoint=/usr/sbin/named-checkconf \
+				--name "${container_name}-checkconf" \
+				--network none \
+				--replace \
+				--restart no \
+				--rm \
+			"localhost/${dockerimage}" "${NAMED_CONF}" || rc=${?}
+	fi
+	if [ $(( rc )) -ne 0 ]; then
+		eerror "named-checkconf failed! Please fix your config first."
+		return 1
+	fi
+
+	eend 0
+	return 0
+} # checkconfig
+
+checkzones() {
+	local -i rc=0
+
+	_checkpaths || return ${?}
+
+	ebegin "Checking named configuration and zones"
+	if service_started; then
+		docker exec "${container_name}" \
+			named-checkconf -z -j "${NAMED_CONF}" || rc=${?}
+	else
+		docker run "${command_docker_args[@]:-}" \
+				--cap-drop ALL \
+				--entrypoint=/usr/sbin/named-checkconf \
+				--name "${container_name}-checkzones" \
+				--network none \
+				--replace \
+				--restart no \
+				--rm \
+			"localhost/${dockerimage}" -z -j "${NAMED_CONF}" || rc=${?}
+	fi
+
+	eend ${rc}
+} # checkzones
+
+# Moved to entrypoint.d/named as tools required by generate-ptr.sh are only
+# available within the 'named' container ...
+#
+regenerateconfig() {
+	if service_started; then
+		docker exec "${container_name}" \
+			sh /usr/libexec/entrypoint.d/named
+	else
+		docker run "${command_docker_args[@]:-}" \
+				--cap-drop ALL \
+				--entrypoint=/bin/sh \
+				--name "${container_name}-regenerateconfig" \
+				--network none \
+				--replace \
+				--restart no \
+				--rm \
+			"localhost/${dockerimage}" /usr/libexec/entrypoint.d/named
+	fi
+} # regenerateconfig
+
+freeze() {
+	#ebegin "Freezing zones"
+	#docker exec "${container_name}" rndc freeze
+	#eend ${?}
+
+	local view='' zone=''
+	local -i rc=0
+
+	for view in 'internal'; do
+		if ! [ -d "/var/bind/pri/${view}" ]; then
+			eerror "Data for view '${view}' not found in" \
+				"§'/var/bind/pri/${view}'"
+			return 1
+		fi
+		for zone in $(
+			docker exec "${container_name}" named-checkconf -l |
+			grep "${view} master" |
+			awk '{ print $1 }' |
+			grep -ve '^0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa$' \
+				-e '^127.in-addr.arpa$' \
+				-e '^localhost$' |
+			sort -V
+		); do
+			ebegin "Freezing zone '${zone}'"
+			docker exec "${container_name}" rndc freeze \
+				"${zone}" IN "${view}" || { rc=${?} ; false ; }
+			eend ${?}
+		done
+	done
+
+	return ${rc}
+} # freeze
+
+unfreeze() {
+	#ebegin "Unfreezing zones"
+	#docker exec "${container_name}" rndc unfreeze
+	#eend ${?}
+
+	local view='' zone=''
+	local -i rc=0
+
+	for view in 'internal'; do
+		if ! [ -d "/var/bind/pri/${view}" ]; then
+			eerror "Data for view '${view}' not found in" \
+				"'/var/bind/pri/${view}'"
+			return 1
+		fi
+		for zone in $(
+			docker exec "${container_name}" named-checkconf -l |
+			grep "${view} master" |
+			awk '{ print $1 }' |
+			grep -ve '^0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa$' \
+				-e '^127.in-addr.arpa$' \
+				-e '^localhost$' |
+			sort -V
+		); do
+			ebegin "Unfreezing zone '${zone}'"
+			docker exec "${container_name}" rndc unfreeze \
+				"${zone}" IN "${view}" || { rc=${?} ; false ; }
+			eend ${?}
+		done
+	done
+
+	return ${rc}
+} # unfreeze
+
+sync() {
+	ebegin "Synchronising all zones"
+	docker exec "${container_name}" rndc sync -clean
+	eend $?
+} # sync
+
+inspect() {
+	_checkpaths || return ${?}
+
+	_containers_inspect
+}
+
+start_pre() {
+	read -r -d '' container_git_ignore <<-EOF
+
+		**/*.cache
+		**/*.jbk
+		**/*.jnl
+		**/*.key
+		**/*.mkeys
+		**/*.private
+		**/*.signed
+		**/*.state
+		**/backup/
+	EOF
+
+	checkconfig || { eend 1; return 1; }
+
+	_containers_start_pre || return ${?}
+}
+
+start_post() {
+	container_svc_wait=20
+
+	_containers_start_post
+}
+
+sync() {
+	local -i rc=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || { eend 1; return 1; }
+
+	ebegin "Clearing journal files"
+
+	docker exec "${container_name}" rndc sync -clear
+
+	eend ${rc}
+}
+
+reload() {
+	local -i rc=0
+
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	checkconfig || { eend 1; return 1; }
+
+	ebegin "Reloading named.conf and zone files"
+
+	docker exec "${container_name}" rndc reload
+
+	eend ${rc}
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
