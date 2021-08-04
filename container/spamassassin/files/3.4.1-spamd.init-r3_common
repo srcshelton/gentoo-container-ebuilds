@@ -66,6 +66,13 @@ dockermounts=(
 	--mount type=bind,source=/storage/mail/,destination=/storage/mail/
 )
 
+if [ "${SPAMD_RUN_AS_ROOT:-}" != 'true' ]; then
+	# Passing --username=root to spamd kills it, so if SPAMD_RUN_AS_ROOT
+	# is true, then we want to pass no user/group command args at all.
+	# Any value other than "true" gets the default user/group of "spamd".
+	command_opts="${command_opts} --username=spamd --groupname=spamd"
+fi
+
 _containers_set_args
 
 #command_args_background="--daemonize"
@@ -78,13 +85,6 @@ start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait-1000}" \
 # while to kill off all of its children. This was bug 322025.
 retry="${SPAMD_TIMEOUT}"
 command_progress='true'
-
-if [ "${SPAMD_RUN_AS_ROOT:-}" != 'true' ]; then
-	# Passing --username=root to spamd kills it, so if SPAMD_RUN_AS_ROOT
-	# is true, then we want to pass no user/group command args at all.
-	# Any value other than "true" gets the default user/group of "spamd".
-	command_args="${command_args} --username=spamd --groupname=spamd"
-fi
 
 #required_dirs="${SPAMD_PIDDIR}"
 
