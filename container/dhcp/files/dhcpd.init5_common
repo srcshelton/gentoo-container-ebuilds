@@ -111,7 +111,7 @@ _checkconfig() {
 				--replace \
 				--restart no \
 				--rm \
-			"${dockerimage}" "${@}" >/dev/null 2>&1 || rc=${?}
+			"localhost/${dockerimage}" "${@}" >/dev/null 2>&1 || rc=${?}
 	fi
 	if [ $(( rc )) -ne 0 ] ; then
 		if service_started; then
@@ -126,7 +126,7 @@ _checkconfig() {
 					--replace \
 					--restart no \
 					--rm \
-				"${dockerimage}" "${@}"
+				"localhost/${dockerimage}" "${@}"
 		fi
 	fi
 
