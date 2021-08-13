@@ -14,9 +14,10 @@ KEYWORDS="amd64 ~ppc x86"
 SLOT="0"
 
 DEPEND="container/spamassassin:="
-RDEPEND="${BDEPEND}
+RDEPEND="${DEPEND}
 	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts"
+	app-emulation/container-init-scripts
+	!mail-filter/spampd"
 
 S="${WORKDIR}"
 
