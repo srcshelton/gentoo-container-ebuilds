@@ -8,8 +8,8 @@ description_prune="Prune container system"
 description="Prepare the system for docker/podman container-running"
 
 depend() {
-	need localmount lvm net
-	use docker podman
+	need localmount net
+	use docker podman lvm
 }
 
 _get_runner() {
@@ -35,6 +35,10 @@ _clean() {
 	#) | wc -l ) )); do
 	#	:
 	#done
+	podman container stop --all --ignore ||
+	podman container stop --all --ignore
+	podman container rm --all --ignore --volumes ||
+	podman container rm --all --ignore --volumes
 	docker system prune --force
 	if command -v buildah >/dev/null 2>&1; then
 		buildah rm --all
