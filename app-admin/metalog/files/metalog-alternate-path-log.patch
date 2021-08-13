@@ -1,0 +1,17 @@
+--- a/src/metalog.h
++++ b/src/metalog.h
+@@ -48,11 +48,14 @@
+ 
+ #include "helpers.h"
+ 
++/*
+ #ifdef _PATH_LOG
+ # define SOCKNAME _PATH_LOG
+ #else
+ # define SOCKNAME "/dev/log"
+ #endif
++*/
++# define SOCKNAME "/var/run/metalog/log"
+ #ifdef _PATH_KLOG
+ # define KLOG_FILE _PATH_KLOG
+ #else
