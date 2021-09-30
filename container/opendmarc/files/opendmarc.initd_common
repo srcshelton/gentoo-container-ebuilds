@@ -68,7 +68,9 @@ retry='TERM/10/KILL/2'
 description="A milter providing DKIM signing and verification"
 extra_commands="checkconfig"
 #extra_started_commands="stats"
+extra_stopped_commands="update"
 description_checkconfig="Validate configuration"
+description_update="Download public suffix list"
 #description_stats="Output statistics"
 
 required_files="${CONFFILE}"
@@ -78,6 +80,20 @@ depend() {
 	need containers
 	use dns logger net
 	before mta
+}
+
+update() {
+	ebegin "Fetching latest public suffix list ..."
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL -o /etc/opendmarc/public_suffix_list.dat \
+			https://publicsuffix.org/list/public_suffix_list.dat
+	elif command -v wget >/dev/null 2>&1; then
+		wget -qt0 -O /etc/opendmarc/public_suffix_list.dat \
+			https://publicsuffix.org/list/public_suffix_list.dat
+	else
+		false
+	fi
+	eend ${?} "Download failed: ${?}"
 }
 
 checkconfig() {

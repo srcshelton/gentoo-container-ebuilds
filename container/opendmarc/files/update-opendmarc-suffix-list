@@ -1,0 +1,49 @@
+#! /bin/sh
+
+debug="${DEBUG:-}"
+trace="${TRACE:-}"
+
+service='opendmarc'
+
+runcmd() {
+	cmd="${1:-}"
+	shift
+	ret=0
+
+	# Return status:
+	#  0  - started
+	#  3  - stopped
+	#  32 - crashed
+	if [ -z "${cmd:-}" ]; then
+		return 127
+	else
+		if [ -n "${debug:-}" ]; then
+			"${cmd}" ${@+"${@}"} || ret=${?}
+		else
+			"${cmd}" ${@+"${@}"} --quiet >/dev/null 2>&1 || ret=${?}
+		fi
+	fi
+
+	return ${ret}
+}
+
+[ -n "${trace:-}" ] && set -o xtrace
+
+rc=0
+
+if [ -x /etc/init.d/${service} ]; then
+	runcmd rc-service ${service} status || rc=${?}
+	if [ $(( rc )) -ne 3 ]; then
+		if ! runcmd rc-service ${service} stop; then
+			rc=${?}
+			echo >&2 "FATAL: service '${service}' failed to stop: ${rc}"
+			exit ${rc}
+		fi
+	fi
+	runcmd rc-service ${service} update || rc=${?}
+	runcmd rc-service ${service} start || rc=${?}
+fi
+
+exit ${rc}
+
+# vi: set syntax=sh:
