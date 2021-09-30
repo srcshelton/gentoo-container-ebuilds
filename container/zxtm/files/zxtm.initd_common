@@ -16,8 +16,8 @@ container_use_git="${ZXTM_USE_GIT:-}"
 container_svc_pid="/var/run/zeus/zxtm/internal/pid"
 container_svc_pid_dir="/var/run/zeus/zxtm"
 
-container_svc_wait=20
-retry='TERM/15/KILL/2'
+container_svc_wait=30
+retry='TERM/30/KILL/5'
 
 . /etc/init.d/_containers_common || return ${?}
 
