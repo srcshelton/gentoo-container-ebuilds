@@ -10,7 +10,7 @@ HOMEPAGE="https://syslog-ng.com/open-source-log-management"
 
 LICENSE="GPL-2+ LGPL-2.1+"
 SLOT="0"
-KEYWORDS="~alpha amd64 ~arm ~arm64 hppa ~ia64 ~mips ppc ppc64 ~riscv ~s390 sparc x86"
+KEYWORDS="~alpha amd64 arm arm64 hppa ~ia64 ~mips ppc ppc64 ~riscv ~s390 sparc x86"
 #IUSE="amqp caps dbi geoip2 http ipv6 json kafka libressl mongodb pacct python redis smtp snmp spoof-source systemd tcpd test"
 #REQUIRED_USE="python? ( ${PYTHON_REQUIRED_USE} )"
 #RESTRICT="!test? ( test )"
