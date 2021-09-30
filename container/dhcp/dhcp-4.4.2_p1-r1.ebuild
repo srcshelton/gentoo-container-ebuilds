@@ -15,7 +15,7 @@ HOMEPAGE="https://www.isc.org/dhcp"
 #	ftp://ftp.isc.org/isc/dhcp/${MY_PV}/${MY_P}.tar.gz"
 
 LICENSE="MPL-2.0 BSD SSLeay GPL-2" # GPL-2 only for init script
-KEYWORDS="~alpha amd64 arm ~arm64 ~hppa ~ia64 ~m68k ~mips ~ppc ~ppc64 ~s390 ~sparc x86"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~m68k ~mips ppc ppc64 ~riscv ~s390 sparc x86"
 #IUSE="+client ipv6 kernel_linux ldap selinux +server ssl systemd vim-syntax"
 IUSE="-ipv6 ldap +server"
 SLOT="0"
