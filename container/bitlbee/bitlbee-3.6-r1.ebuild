@@ -4,7 +4,7 @@
 EAPI=7
 
 #SRC_URI="https://get.bitlbee.org/src/${P}.tar.gz"
-KEYWORDS="~amd64 ~ppc ~ppc64 ~x86"
+KEYWORDS="amd64 ppc ~ppc64 x86"
 DESCRIPTION="irc to IM gateway that support multiple IM protocols"
 HOMEPAGE="https://www.bitlbee.org/"
 
