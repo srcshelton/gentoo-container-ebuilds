@@ -10,19 +10,173 @@ description="Prepare the system for docker/podman container-running"
 depend() {
 	need localmount net
 	use docker podman lvm
-}
+}  # depend
 
 _get_runner() {
-	if command -v podman >/dev/null 2>&1; then
+	if command -v podman >/dev/null 2>&1 ; then
 		docker() { podman ${@+"${@}"} ; }
 		export -f docker
-	elif command -v docker >/dev/null 2>&1; then
+	elif command -v docker >/dev/null 2>&1 ; then
 		:
 	else
 		eerror "Could not find container runner"
 		return 1
 	fi
-}
+}  # _get_runner
+
+_migrate_run_root() {
+	local runroot='' fstype='' mptmpdir=''
+	local -i ismountpoint=0
+
+	# We can't use docker/podman themselves as if the runRoot isn't
+	# accessible they'll hang :(
+	#
+	#if ! runroot="$( readlink -e "$(
+	#	docker info | grep -F 'runRoot' | awk -F': ' '{ print $2 }'
+	#)" )" ; then
+	if ! runroot="$( readlink -m "$(
+		sed 's/#.*$//' /etc/containers/storage.conf |
+		grep -i "^\s*runroot\s*=\s*['\"]\?.*['\"]\?\s*$" |
+		awk -F'"' '{ print $2 }'
+	)" )" ; then
+		eerror "Cannot determine absolute location of runRoot" \
+			"'${runroot:-}': ${?}"
+		return 1
+	fi
+
+	# Directory doesn't exist, we need to create it...
+	if ! [ -d "${runroot}" ] ; then
+		if ! mkdir -p "${runroot}"; then
+			eerror "mkdir() on '${runroot}' failed: ${?}"
+			return 1
+		fi
+		chmod 0 "${runroot}"
+		chattr +i "${runroot}"
+		if
+			! mount -t tmpfs 'podman.runRoot' "${runroot}" \
+				-o nodev,noexec,nosuid,size=10M
+		then
+			eend ${?} "mount failed: {?}"
+			return ${?}
+		fi
+
+	# Directory exists (and isn't a mountpoint) and is empty - easy!
+	elif
+		! mountpoint -q "${runroot}" && \
+			find "${runroot}" -maxdepth 0 -type d -not -empty \
+				-exec false {} + 2>/dev/null
+	then
+		chmod 0 "${runroot}" 2>/dev/null || :
+		chattr +i "${runroot}" 2>/dev/null || :
+		if
+			! mount -t tmpfs 'podman.runRoot' "${runroot}" \
+				-o nodev,noexec,nosuid,size=10M
+		then
+			eend ${?} "mount failed: {?}"
+			return ${?}
+		fi
+
+	else
+		if ! fstype="$( stat -f -c %T "${runroot}/." )" ; then
+			eerror "stat(${runroot}) failed: ${?}"
+		else
+			if [ "${fstype}" != 'tmpfs' ] ; then
+				if mountpoint -q "${runroot}" ; then
+					ebegin "Moving runRoot mountpoint '${runroot}' from" \
+						"filesystem '${fstype}' to 'tmpfs'"
+					ismountpoint=1
+				else
+					ebegin "Moving runRoot '${runroot}' from filesystem" \
+						"'${fstype}' to 'tmpfs'"
+				fi
+
+				if
+					! mptmpdir="$(
+						mktemp \
+								--directory \
+								--quiet \
+								--tmpdir="$( dirname "${runroot}" )" \
+							"${SVCNAME}-tmp.XXXXXXXX"
+					)"
+				then
+					eend ${?} "mktemp() failed: ${?}"
+					return ${?}
+				fi
+
+				if [ $(( ismountpoint )) -eq 0 ]; then
+					if ! rmdir "${mptmpdir}" ; then
+						eerror "rmdir() failed on '${mptmpdir}': ${?}"
+						return 1
+					fi
+					if ! mv "${runroot}" "${mptmpdir}" ; then
+						eerror "rename() failed from '${runroot}' to" \
+							"'${mptmpdir}': ${?}"
+						return 1
+					fi
+				else
+					if
+						! find "${runroot}"/ \
+							-xdev \
+							-maxdepth 1 \
+							-exec cp -a {} "${mptmpdir}/" ';' 2>/dev/null
+					then
+						eend ${?} "file copy failed: ${?}"
+						if ! rm -r "${mptmpdir}" ; then
+							eerror "rmdir() failed on '${mptmpdir}': ${?}"
+						fi
+						return 1
+					fi
+					if ! {
+						umount "${runroot}" ||
+						umount -f "${runroot}"
+					} ; then
+						ewarn "umount of '${runroot}' failed: ${?}"
+						ewarn "Will over-mount with 'tmpfs' filesystem ..."
+					fi
+					if ! rm -r "${runroot}"; then
+						ewarn "Cannot remove runRoot directory" \
+							"'${runroot}': ${?}"
+						ewarn "Will over-mount with 'tmpfs' filesystem ..."
+					fi
+				fi
+
+				if ! mkdir -p "${runroot}"; then
+					eerror "mkdir() on '${runroot}' failed: ${?}"
+					return 1
+				fi
+				chmod 0 "${runroot}"
+				chattr +i "${runroot}"
+
+				if
+					! mount -t tmpfs 'podman.runRoot' "${runroot}" \
+						-o nodev,noexec,nosuid,size=10M
+				then
+					eend ${?} "mount failed: {?}"
+					return ${?}
+				fi
+				if
+					! find "${mptmpdir}"/ \
+						-xdev \
+						-maxdepth 1 \
+						-exec mv {} "${runroot}/" ';' 2>/dev/null
+				then
+					eend ${?} "file copy failed: ${?}"
+					ewarn "Preserving temporary directory '${mptmpdir}'"
+					return 1
+				fi
+				if ! rmdir "${mptmpdir}" ; then
+					eend ${?} "rmdir() failed on '${mptmpdir}': ${?}"
+					if ! rm -r "${mptmpdir}"; then
+						eerror "Cannot remove temporary directory" \
+							"'${mptmpdir}': ${?}"
+					fi
+				fi
+				unset mptmpdir
+				eend ${?} "runRoot migration failed: ${?}"
+			fi
+		fi
+	fi
+}  # _migrate_run_root
 
 _clean() {
 	local actions="${1:-}"
@@ -31,61 +185,66 @@ _clean() {
 
 	# With podman, 'system prune' isn't recursive :(
 	#while (( 2 != $( (
-	#	docker system prune -f | sed 's/^/   /' | tee /dev/tty0 2>/dev/null || :
+	#	docker system prune -f | sed 's/^/   /' |
+	#		tee /dev/tty0 2>/dev/null || :
 	#) | wc -l ) )); do
 	#	:
 	#done
-	podman container stop --all --ignore ||
-	podman container stop --all --ignore
-	podman container rm --all --ignore --volumes ||
-	podman container rm --all --ignore --volumes
+	docker container stop --all --ignore ||
+	docker container stop --all --ignore
+	docker container rm --all --ignore --volumes ||
+	docker container rm --all --ignore --volumes
 	docker system prune --force
-	if command -v buildah >/dev/null 2>&1; then
+	if command -v buildah >/dev/null 2>&1 ; then
 		buildah rm --all
 		buildah rmi --prune
 	fi
-	[ -n "${actions:-}" ] && [ 'netns' = "${actions}" ] && ip -all netns del
+	[ -n "${actions:-}" ] && [ 'netns' = "${actions}" ] &&
+		ip -all netns del
 
 	eend 0
-}
+}  # _clean
 
 # Somehow, if a stage isn't defined here but is defined in another (container-
 # based?) init script, then that function is called when this init script runs,
 # although without any global variables associated with the actual script?!
 
 start_pre() {
-	_get_runner
-}
+	_get_runner || return ${?}
+
+	_migrate_run_root
+}  # start_pre
 
 start() {
-	if [ -e .block_containers ]; then
+	if [ -e /.block_containers ] ; then
 		eerror "Not loading container services"
 		ewarn "Remove /.block_containers to resume operation"
 		return 1
 	fi
 	_clean netns
-}
+}  #start
 
 start_post() {
 	:
-}
+}  # start_post
 
 stop_pre() {
 	_get_runner
-}
+}  # stop_pre
 
 stop() {
 	docker stop --all
 
 	_clean netns
-}
+}  # stop
 
 stop_post() {
 	:
-}
+}  # stop_post
 
 prune() {
 	_get_runner || return ${?}
 	_clean
-}
+}  # prune
 
+# vi: set colorcolumn=80 noet sw=4 syntax=bash ts=4:

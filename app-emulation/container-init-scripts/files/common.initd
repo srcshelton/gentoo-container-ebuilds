@@ -65,6 +65,14 @@ if type -pf podman >/dev/null; then
 	export -f docker
 fi
 
+if [ -r /proc/filesystems ] && ! grep -q -- 'overlay' /proc/filesystems; then
+	# We should really check that the 'overlay' driver is actually in use
+	# here... but this is a sensible and reasonably harmless default
+	ebegin "Attempting to load 'overlay' kernel module"
+	modprobe overlay >/dev/null 2>&1
+	eend ${?} "Module load failed"
+fi
+
 #RC_SVCNAME=''            # Set by OpenRC
 #PN=''                    # Package name
 #PNV=''                   # Name variant (where $RC_SVCNAME differs from $PN)
@@ -264,25 +272,10 @@ _containers_inspect() {
 		"localhost/${dockerimage}"
 } # _containers_inspect
 
-_containers_start_pre() {
+_containers_git_commit_changes() {
 	local container_dir_etc="${container_dir_etc-/etc/${PN}}"
 	local container_use_git="${container_use_git-0}"
 	local git=''
-
-	set -u
-
-	if
-		! docker image ls "localhost/${dockerimage}" 2>/dev/null |
-		grep -Fq -- 'localhost'
-	then
-		eerror "Container image '${dockerimage}' not found"
-		return 1
-	fi
-	if [ -e "${pidfile%.pid}.cid" ]; then
-		ewarn "Stale Container ID file '${pidfile%.pid}.cid' still" \
-			"exists - removing..."
-		rm -f "${pidfile%.pid}.cid"
-	fi
 
 	if [ -n "${container_use_git:-}" ] && [ "${container_use_git}" != "0" ]; then
 		type -pf git >/dev/null 2>&1 && git="git"
@@ -310,8 +303,28 @@ _containers_start_pre() {
 			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
 		popd >/dev/null 2>&1 || :
 	fi
+} # _containers_git_commit_changes
 
+_containers_start_pre() {
 	local id=''
+
+	set -u
+
+	if
+		! docker image ls "localhost/${dockerimage}" 2>/dev/null |
+		grep -Fq -- 'localhost'
+	then
+		eerror "Container image '${dockerimage}' not found"
+		return 1
+	fi
+	if [ -e "${pidfile%.pid}.cid" ]; then
+		ewarn "Stale Container ID file '${pidfile%.pid}.cid' still" \
+			"exists - removing..."
+		rm -f "${pidfile%.pid}.cid"
+	fi
+
+	_containers_git_commit_changes
+
 	id="$( docker ps -a --filter "name=${container_name}" --format '{{.ID}}' 2>/dev/null )"
 	if [ -n "${id:-}" ]; then
 		veinfo "Attempting to remove old '${container_name}' container '${id}' ..."
@@ -486,20 +499,23 @@ _containers_status() {
 				local part='' label='' value='' tab=$'\t'
 				local -i first=1
 				for part in ${labels}; do
-					if [[ "${part}" =~ ':' ]]; then
-						if [ -n "${label:-}" ] && [ -n "${value:-}" ]; then
-							if (( first )); then
-								first=0
-								$output "Labels: ${label}:${tab}'${value}'"
-							else
-								$output "        ${label}:${tab}'${value}'"
+					case "${part}" in
+						*:*)
+							if [ -n "${label:-}" ] && [ -n "${value:-}" ]; then
+								if (( first )); then
+									first=0
+									$output "Labels: ${label}:${tab}'${value}'"
+								else
+									$output "        ${label}:${tab}'${value}'"
+								fi
 							fi
-						fi
-						label="$( cut -d':' -f 1 <<<"${part}" )"
-						value="$( cut -d':' -f 2- <<<"${part}" )"
-					else
-						value+=" ${part}"
-					fi
+							label="$( cut -d':' -f 1 <<<"${part}" )"
+							value="$( cut -d':' -f 2- <<<"${part}" )"
+							;;
+						*)
+							value+=" ${part}"
+							;;
+					esac
 				done
 				if [ -n "${label:-}" ] && [ -n "${value:-}" ]; then
 					$output "        ${label}:${tab}'${value}'"
