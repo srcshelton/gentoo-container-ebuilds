@@ -27,6 +27,8 @@ command_opts="$( echo "--cfgfile \"${SYSLOG_NG_CONFIGFILE}\"" \
 container_dir_run="${SYSLOG_NG_PIDFILE_DIR}"
 container_use_git="${SYSLOG_NG_USE_GIT:-}"
 
+container_svc_wait=10
+
 . /etc/init.d/_containers_common || return ${?}
 
 dockeropts+=(
