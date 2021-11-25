@@ -260,6 +260,9 @@ start_pre() {
 	checkconfig || { eend 1; return 1; }
 
 	_containers_start_pre || return ${?}
+
+	container_dir_etc="/var/bind" \
+		_containers_git_commit_changes
 }
 
 start_post() {
