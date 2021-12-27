@@ -22,8 +22,8 @@ BDEPEND="
 "
 
 RDEPEND="${BDEPEND}
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	!net-dns/bind"
 
 S="${WORKDIR}"

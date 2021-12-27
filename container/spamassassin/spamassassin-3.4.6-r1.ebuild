@@ -1,4 +1,4 @@
-# Copyright 1999-2020 Gentoo Authors
+# Copyright 1999-2021 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
@@ -9,8 +9,8 @@ HOMEPAGE="https://spamassassin.apache.org/"
 #SRC_URI="mirror://apache/spamassassin/source/${MY_P}.tar.bz2"
 
 LICENSE="Apache-2.0 GPL-2"
-KEYWORDS="~alpha ~amd64 ~arm ~arm64 ~hppa ~ia64 ~ppc ~ppc64 ~s390 ~sparc ~x86 ~amd64-linux ~x86-linux"
-#IUSE="+berkdb cron dkim geoip ipv6 largenet ldap libressl mysql office pacct postgres qmail razor +sa-update spf sqlite ssl systemd test unicode"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ppc ppc64 ~s390 sparc x86 ~amd64-linux ~x86-linux"
+#IUSE="+berkdb cron dkim geoip ipv6 largenet ldap mysql office pacct postgres qmail razor +sa-update spf sqlite ssl systemd test unicode"
 IUSE="cron mysql postgres"
 #RESTRICT="!test? ( test )"
 SLOT="0"
@@ -22,7 +22,8 @@ RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
 	acct-user/spamd
-	acct-group/spamd"
+	acct-group/spamd
+	!mail-filter/spamassassin"
 
 S="${WORKDIR}"
 

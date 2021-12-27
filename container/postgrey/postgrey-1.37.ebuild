@@ -18,7 +18,7 @@ SLOT="0"
 
 BDEPEND="sys-apps/grep"
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
+	|| ( app-containers/podman app-containers/docker )
 	acct-group/postgrey
 	acct-user/postgrey
 	acct-user/postfix"

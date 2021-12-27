@@ -23,8 +23,8 @@ SLOT="10.5/${SUBSLOT:-0}"
 
 # dev-db/mysql-connector-c needed for my_print_defaults ...
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	dev-db/mysql-connector-c
 	acct-group/mysql
 	acct-user/mysql

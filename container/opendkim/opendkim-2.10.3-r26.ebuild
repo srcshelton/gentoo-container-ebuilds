@@ -14,8 +14,8 @@ KEYWORDS="amd64 ~arm ~arm64 x86"
 #RESTRICT="!test? ( test )"
 SLOT="0"
 
-RDEPEND="|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+RDEPEND="|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	acct-group/dkimsocket
 	acct-group/opendkim
 	acct-user/opendkim

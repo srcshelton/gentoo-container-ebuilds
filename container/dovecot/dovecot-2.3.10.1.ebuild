@@ -38,7 +38,7 @@ KEYWORDS="~alpha amd64 ~arm ~hppa ~ia64 ~mips ppc ppc64 ~s390 ~sparc x86"
 IUSE="ipv6 ldap managesieve mysql pam postgres sieve vpopmail"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
+	|| ( app-containers/podman app-containers/docker )
 	acct-group/dovecot
 	acct-group/dovenull
 	acct-group/mail

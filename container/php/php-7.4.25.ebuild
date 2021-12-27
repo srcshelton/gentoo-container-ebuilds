@@ -40,8 +40,8 @@ COMMON_DEPEND="
 	container/lighttpd:="
 
 RDEPEND="${COMMON_DEPEND}
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	!dev-lang/php
 	!app-eselect/eselect-php"
 

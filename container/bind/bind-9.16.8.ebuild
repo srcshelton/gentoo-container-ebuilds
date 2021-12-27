@@ -21,7 +21,7 @@ BDEPEND="
 	acct-user/named
 "
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
+	|| ( app-containers/podman app-containers/docker )
 	${BDEPEND}"
 
 S="${WORKDIR}"

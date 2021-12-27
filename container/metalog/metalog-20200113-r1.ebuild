@@ -13,8 +13,8 @@ KEYWORDS="~alpha ~amd64 ~arm ~arm64 ~hppa ~ia64 ~m68k ~mips ~ppc ~ppc64 ~riscv ~
 SLOT="0"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts"
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts"
 
 S="${WORKDIR}"
 

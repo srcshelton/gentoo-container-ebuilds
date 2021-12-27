@@ -23,8 +23,8 @@ SLOT="0"
 BDEPEND="
 	|| ( sys-apps/coreutils sys-apps/busybox[make-symlinks] )"
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	acct-group/dhcp
 	acct-user/dhcp
 	!net-misc/dhcp"

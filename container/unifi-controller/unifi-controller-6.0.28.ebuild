@@ -26,7 +26,7 @@ RESTRICT="mirror"
 SLOT="0"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
+	|| ( app-containers/podman app-containers/docker )
 	acct-group/unifi
 	acct-user/unifi
 "

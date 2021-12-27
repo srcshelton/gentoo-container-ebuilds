@@ -15,8 +15,8 @@ SLOT="0"
 
 DEPEND="container/spamassassin:="
 RDEPEND="${DEPEND}
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	!mail-filter/spampd"
 
 S="${WORKDIR}"

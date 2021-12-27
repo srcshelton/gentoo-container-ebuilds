@@ -21,8 +21,8 @@ SLOT="0"
 #"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	acct-group/bitlbee
 	acct-user/bitlbee
 "

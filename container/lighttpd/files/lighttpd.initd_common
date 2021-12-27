@@ -37,6 +37,7 @@ PN="${RC_SVCNAME:=lighttpd}" # PN='lighttpd'
 PV='@PVR@'
 CATEGORY='www-servers'
 container_name_root="openrc-${PN}-${PV}"
+content_name="${container_name_root}.web-content"
 container_name="${container_name_root}.web-server"
 container_svc_pid="${LIGHTTPD_PID}"
 command_opts="-f \"${LIGHTTPD_CONF}\" -D"
@@ -86,7 +87,7 @@ fi
 unset dir webapp
 
 dockervolumes=(
-	--volumes-from "${container_name_root}.web-content"
+	--volumes-from "${content_name}"
 )
 
 _containers_set_args
@@ -223,32 +224,33 @@ start_pre() {
 	fi
 
 	#id="$( docker ps -a \
-	#	--filter "name=openrc-${container_name_root}.web-content" \
+	#	--filter "name=${content_name}" \
 	#	--format '{{.ID}}' 2>/dev/null
 	#)"
 	#if [ -n "${id:-}" ]; then
 	#	veinfo "Attempting to remove old" \
-	#		"'${container_name_root}.web-content' container" \
+	#		"'${content_name}' container" \
 	#		"'${id}' ..."
 	#	docker rm --volumes "${id}" >/dev/null 2>&1
 	#fi
 
 	id="$( docker ps -a \
-		--filter "name=openrc-${container_name_root}.web-content" \
+		--filter "name=${content_name}" \
 		--format '{{.ID}}' 2>/dev/null
 	)"
-	if [ -z "${id:-}" ]; then
+	if [ -n "${id:-}" ]; then
+		einfo "Re-using existing web-content volume from image '${content_name}' ..."
+	else
 		ebegin "Generating web-content volumes from image '${CONTENT_IMAGE}' for '${RC_SVCNAME}'"
 		docker run \
 				--cap-drop ALL \
 				--entrypoint=/bin/true \
-				--name "${container_name_root}.web-content" \
+				--name "${content_name}" \
 				--network none \
 				--replace \
 				--restart no \
 			"localhost/${CONTENT_IMAGE}"
-		eend ${?} "Launching container" \
-			"'${container_name_root}.web-content' from image" \
+		eend ${?} "Launching container '${content_name}' from image" \
 			"'${CONTENT_IMAGE}' via service '${RC_SVCNAME}'" \
 			"failed: ${?}" || return 1
 	fi

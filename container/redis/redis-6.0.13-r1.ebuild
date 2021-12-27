@@ -14,8 +14,8 @@ KEYWORDS="amd64 arm arm64 ~hppa ppc ppc64 sparc x86 ~amd64-linux ~x86-linux ~x86
 SLOT="0"
 
 COMMON_DEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 "
 
 RDEPEND="

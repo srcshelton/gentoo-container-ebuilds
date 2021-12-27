@@ -21,8 +21,8 @@ COMMON_DEPEND="
 	acct-user/lighttpd"
 
 RDEPEND="${COMMON_DEPEND}
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	!www-servers/lighttpd"
 
 S="${WORKDIR}"

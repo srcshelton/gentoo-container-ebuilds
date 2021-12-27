@@ -26,8 +26,8 @@ DEPEND="
 BDEPEND="${DEPEND}"
 
 RDEPEND="${DEPEND}
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	acct-group/dkimsocket"
 	#memcached? ( net-misc/memcached )"
 

@@ -15,8 +15,8 @@ KEYWORDS="amd64 arm arm64 ppc ~ppc64 x86"
 #IUSE="caps +numa selinux systemd tui"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts"
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts"
 
 S="${WORKDIR}"
 

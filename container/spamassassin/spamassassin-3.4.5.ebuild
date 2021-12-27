@@ -19,8 +19,8 @@ SLOT="0"
 # required (i.e. not optional) dependency is missing. We therefore
 # require most of the optional modules only at runtime.
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
-	app-emulation/container-init-scripts
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
 	acct-user/spamd
 	acct-group/spamd"
 

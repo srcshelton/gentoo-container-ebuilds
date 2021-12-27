@@ -15,7 +15,7 @@ KEYWORDS="amd64 ~arm x86"
 SLOT="0"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
+	|| ( app-containers/podman app-containers/docker )
 	acct-group/dkimsocket
 	acct-group/opendkim
 	acct-user/opendkim

@@ -14,7 +14,7 @@ KEYWORDS="amd64 arm arm64 ~hppa ~ppc ~ppc64 x86 ~amd64-linux ~x86-linux ~x86-mac
 SLOT="0"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
+	|| ( app-containers/podman app-containers/docker )
 	acct-group/redis
 	acct-user/redis"
 

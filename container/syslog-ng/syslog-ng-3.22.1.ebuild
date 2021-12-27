@@ -17,7 +17,7 @@ KEYWORDS="~alpha amd64 arm arm64 hppa ~ia64 ~mips ppc ppc64 ~riscv ~s390 sparc x
 #RESTRICT="test"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )"
+	|| ( app-containers/podman app-containers/docker )"
 
 S="${WORKDIR}"
 

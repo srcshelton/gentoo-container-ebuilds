@@ -180,8 +180,10 @@ start_pre() {
 		--filter "name=${content_name}" \
 		--format '{{.ID}}' 2>/dev/null
 	)"
-	if [ -z "${id:-}" ]; then
-		ebegin "Generating web-content volumes from '${RC_SVCNAME}'"
+	if [ -n "${id:-}" ]; then
+		einfo "Re-using existing web-content volume from image '${content_name}' ..."
+	else
+		ebegin "Generating web-content volumes from image '${CONTENT_IMAGE}' for '${RC_SVCNAME}'"
 		docker run \
 				--cap-drop ALL \
 				--entrypoint=/bin/true \

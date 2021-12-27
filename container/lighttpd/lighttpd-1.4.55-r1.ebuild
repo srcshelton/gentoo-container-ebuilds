@@ -17,7 +17,7 @@ IUSE="fam ipv6 php"
 SLOT="0"
 
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
+	|| ( app-containers/podman app-containers/docker )
 	acct-group/lighttpd
 	acct-user/lighttpd"
 

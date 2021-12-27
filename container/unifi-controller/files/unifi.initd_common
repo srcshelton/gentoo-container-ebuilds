@@ -52,6 +52,8 @@ dockeropts+=(
 	#--cap-drop ALL
 	--cap-add NET_RAW
 
+	--env 'LOG4J_FORMAT_MSG_NO_LOOKUPS=true'
+
 	--network host
 	# TODO: Check whether system.properties has changed these defaults...
 	#--publish 8080:8080/tcp  # Device inform

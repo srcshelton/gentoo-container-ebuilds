@@ -31,7 +31,7 @@ SLOT="$(ver_cut 1-2)"
 # FIXME: Use some derivative of virtual/httpd-php
 BDEPEND="container/lighttpd:="
 RDEPEND="
-	|| ( app-emulation/podman app-emulation/docker )
+	|| ( app-containers/podman app-containers/docker )
 	${BDEPEND}
 "
 

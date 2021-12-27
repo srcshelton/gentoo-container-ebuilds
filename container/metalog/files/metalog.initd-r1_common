@@ -31,6 +31,8 @@ dockeropts+=(
 	done
 	)
 
+	--log-opt max-size=50m
+
 	--network host
 	#--publish 514:514/udp
 )
