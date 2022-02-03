@@ -30,10 +30,13 @@ container_svc_wait=10
 
 dockeropts+=(
 	--workdir "${REDIS_DIR}"
-
-	--network host
-	#--publish 6379:6379/tcp
 )
+dockernetwork+=(
+	--network host
+)
+#dockerports+=(
+	#--publish 6379:6379/tcp
+#)
 
 dockermounts=( ${dockermount_defaults[@]} )
 
