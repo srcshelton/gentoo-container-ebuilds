@@ -100,10 +100,6 @@ dockeropts+=(
 	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
 	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
 
-	# "Port mappings have been discarded as one of the Host, Container,
-	#  Pod, and None network modes are in use"
-	#--network host
-
 	# Prevents containers from being stopped by sending signals to podman
 	#--init
 
@@ -112,6 +108,11 @@ dockeropts+=(
 	--restart on-failure
 	#--rm
 	--tty
+)
+dockernetwork+=(
+	# "Port mappings have been discarded as one of the Host, Container,
+	#  Pod, and None network modes are in use"
+	#--network host
 )
 
 #shellcheck disable=SC2034
@@ -134,8 +135,8 @@ dockermount_defaults=(
 	"${dockermount_run}"
 )
 
-dockervolumes_hugetlb='--volume /dev/hugetlb:/dev/hugetlb'
-dockervolumes_hugetlb1gb='--volume /dev/hugetlb1gb:/dev/hugetlb'
+dockervolumes_hugetlb='--volume /dev/hugetlb:/dev/hugepages'
+dockervolumes_hugetlb1gb='--volume /dev/hugetlb1gb:/dev/hugepages'
 
 # Used in _containers_check_paths, which can be called from multiple places
 container_dir_owner="${container_dir_owner-root}"
@@ -164,6 +165,8 @@ start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" \
 pidfile="/var/run/containers/${RC_SVCNAME}.pid"
 #retry='TERM/10/KILL/2'
 
+container_stop_timeout=30
+
 name="containerised ${RC_SVCNAME}"
 #description=''
 #description_healthcheck=''
@@ -175,10 +178,13 @@ _containers_set_args() {
 	# Allow substitutions on $command_opts
 	#shellcheck disable=SC2206
 	command_docker_args=(
-		${dockeropts[@]}
+		${dockeropts[@]:-}
 		${container_entrypoint:+--entrypoint ${container_entrypoint}}
 		${dockermounts[@]:-}
 		${dockervolumes[@]:-}
+	)
+	command_docker_net_args=(
+		${dockernetwork[@]:-}
 		${dockerports[@]:-}
 	)
 	command_docker_pid_args=(
@@ -197,6 +203,7 @@ _containers_set_args() {
 	)
 	#shellcheck disable=SC2034,SC2116,SC2154
 	command_args="run $( echo "${command_docker_args[*]:-}" \
+		"${command_docker_net_args[*]:-}" \
 		"${command_docker_pid_args[*]:-}" \
 		"${command_docker_daemon_args[*]:-}" \
 		"localhost/${dockerimage}" \
@@ -674,13 +681,27 @@ _containers_stop_post() {
 
 	set -u
 
-	id="$( docker ps --filter "name=${container_name}" --format '{{.ID}}' 2>/dev/null )"
+	id="$(
+		docker ps \
+				--filter "name=${container_name}" \
+				--format '{{.ID}}' \
+			2>/dev/null
+	)"
 	if [ -n "${id:-}" ]; then
-		docker stop "${id}" >/dev/null
+		docker stop \
+				--ignore \
+				--time "${container_stop_timeout-10}" \
+			"${id}" >/dev/null
 	fi
 
 	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
-		id="$( docker ps -a --filter "name=${container_name}" --format '{{.ID}}' 2>/dev/null )"
+		id="$(
+			docker ps \
+					--all \
+					--filter "name=${container_name}" \
+					--format '{{.ID}}' \
+				2>/dev/null
+		)"
 		if [ -n "${id:-}" ]; then
 			docker rm --volumes "${id}" >/dev/null 2>&1
 		fi
@@ -689,8 +710,13 @@ _containers_stop_post() {
 	if [ -s "${pidfile%.pid}.conmon.pid" ]; then
 		pid="$( cat "${pidfile%.pid}.conmon.pid" 2>/dev/null )"
 		if [ $(( pid )) -gt 300 ]; then
-			if [ -e "/proc/${pid}/exe" ] && readlink -e "/proc/${pid}/exe" | grep -q -- '/conmon$'; then
-				ewarn "monitor for service '${RC_SVCNAME}' container still running as PID ${pid}"
+			if
+				[ -e "/proc/${pid}/exe" ] &&
+				readlink -e "/proc/${pid}/exe" |
+					grep -q -- '/conmon$'
+			then
+				ewarn "monitor for service '${RC_SVCNAME}'" \
+					"container still running as PID ${pid}"
 			fi
 		fi
 	fi
