@@ -32,10 +32,13 @@ dockeropts+=(
 	)
 
 	--log-opt max-size=50m
-
-	--network host
-	#--publish 514:514/udp
 )
+dockernetwork+=(
+	--network host
+)
+#dockerports+=(
+	#--publish 514:514/udp
+#)
 
 dockermounts=(
 	${dockermount_etc},ro=true
