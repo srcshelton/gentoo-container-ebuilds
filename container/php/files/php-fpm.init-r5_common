@@ -53,11 +53,14 @@ dockeropts+=(
 	--cap-add FOWNER
 	--cap-add SETGID
 	--cap-add SETUID
-
+)
+dockernetwork+=(
 	--network host
+)
+#dockerports+=(
 	#--publish 9000:9000/tcp
 	#${svc_port:+--publish ${svc_port}:${svc_port}/tcp}
-)
+#)
 
 dockermounts=(
 	${dockermount_syslog}
