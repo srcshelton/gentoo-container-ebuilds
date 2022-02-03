@@ -25,10 +25,13 @@ dockeropts+=(
 	--cap-add SYS_TIME
 
 	--workdir '/'
-
-	--network host
-	#--publish 123:123/udp
 )
+dockernetwork+=(
+	--network host
+)
+#dockerports+=(
+	#--publish 123:123/udp
+#)
 
 dockermounts=( ${dockermount_defaults[@]} )
 
