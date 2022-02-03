@@ -50,12 +50,15 @@ container_svc_wait="${STARTUP_EARLY_TIMEOUT}"
 
 . /etc/init.d/_containers_common || return ${?}
 
-dockeropts+=(
+#dockeropts+=(
 	#--cap-drop ALL
-
+#)
+dockernetwork+=(
 	--network host
-	#--publish 3306:3306/tcp
 )
+#dockerports+=(
+	#--publish 3306:3306/tcp
+#)
 
 dockermounts=(
 	${dockermount_syslog}
@@ -80,14 +83,15 @@ retry="${STOP_TIMEOUT}"
 
 description="An enhanced, drop-in replacement for MySQL"
 extra_commands="checkconfig"
-extra_started_commands="check reload upgrade"
+extra_started_commands="backup check reload upgrade"
 extra_stopped_commands="bootstrap_galera init_mysql_database"
+description_backup="Output (to stdout) a dump of all databases"
+description_bootstrap_galera="Start a new Galera cluster with this server as the initial node"
 description_checkconfig="Verify the server's configuration"
 description_check="Run mysqlcheck against running database instance"
+description_init_mysql_database="Initialise a new, blank system database"
 description_reload="Reload the grant tables and flush tables, logs, thread, and host cache"
 description_upgrade="Run mysql_upgrade against running database instance"
-description_bootstrap_galera="Start a new Galera cluster with this server as the initial node"
-description_init_mysql_database="Initialise a new, blank system database"
 
 required_files="${MY_CNF}"
 
@@ -182,14 +186,171 @@ checkconfig() {
 	eend $? "${svc_name} config check failed"
 }
 
-check() {
+backup() {
+	local -a mysqldump_args=()
+	local passwd=''
+
+	# Options and defaults as-of 10.5.10:
+	mysqldump_args=(
+		--all-databases
+		--all-tablespaces
+		--add-drop-database
+		--add-drop-table	# Default: on
+		--add-drop-trigger
+		--add-locks		# Deafult: on
+		--allow-keywords
+		#--apply-slave-statements
+		#--character-sets-dir=/usr/share/mariadb/charsets
+		--comments		# Default: on
+		#--compatible=<ansi|mysql323|mysql40|postgresql|oracle|mssql|db2|maxdb|no_key_options|no_table_options|no_field_options>
+		#--compact
+		--complete-insert
+		#--compress
+		#--copy-s3-tables
+		--create-options	# Default: on
+		#--databases
+		#--debug
+		#--debug-check
+		#--debug-info
+		#--default-character-set=utf8mb4
+		--delayed-insert
+		#--delete-master-logs	# Enables --master-data
+		--disable-keys		# Default: on
+		#--dump-slave
+		--events
+		--extended-insert	# Default: on
+		#--fields-terminated-by=
+		#--fields-enclosed-by=
+		#--fields-optionally-enclosed-by=
+		#--fields-escaped-by=
+		--flush-logs
+		--flush-privileges
+		#--force
+		#--gtid
+		--hex-blob
+		#--host=localhost
+		--ignore-database='sys'
+		#--ignore-table-data=
+		#--ignore-table=
+		#--include-master-host-port	# ... with --dump-slave
+		--insert-ignore
+		#--lines-terminated-by=
+		#--lock-all-tables	# Disables --single-transaction and --lock-tables
+		#--lock-tables		# Default: on
+		#--log-error=
+		#--log-queries
+		#--master-data
+		#--max-allowed-packet=
+		#--net-buffer-length=
+		--no-autocommit
+		#--no-create-db
+		#--no-create-info
+		#--no-data
+		#--no-data-med		# Default: on
+		#--no-set-names		# Same as --skip-set-charset
+		#--opt			# Same as --add-drop-table, --add-locks, --create-options, -quick, --extended-insert, --lock-tables, --set-charset, --disable-keys; Default: on
+		--order-by-primary
+		#--password
+		#--port=3306
+		#--protocol=<tcp|socket|pipe>
+		--quick			# Default: on
+		--quote-names		# Default: on
+		--replace
+		#--result-file=
+		--routines
+		--set-charset		# Default: on
+		--single-transaction	# Disables --lock-tables
+		--dump-date		# Default: on
+		#--skip-opt
+		#--socket=
+		#--ssl
+		#--ssl-ca=
+		#--ssl-capath=
+		#--ssl-cert=
+		#--ssl-cipher=
+		#--ssl-key=
+		#--ssl-crl=
+		#--ssl-crlpath=
+		#--tls-version=
+		#--ssl-verify-server-cert
+		#--system=[all, users, plugins, udfs, servers, stats, timezones]
+		#--tab=
+		#--tables
+		--triggers		# Default: on
+		--tz-utc		# Default: on
+		#--user=root
+		--verbose
+		#--version
+		#--where=
+		#--xml
+		#--plugin-dir=
+		#--default-auth=
+	)
+
+	if
+		[[ -n "${MYSQL_ROOT_PASSWORD_FILE:-}" ]] &&
+		[[ -f "${MYSQL_ROOT_PASSWORD_FILE}" ]] &&
+		[[ -s "${MYSQL_ROOT_PASSWORD_FILE}" ]]
+	then
+		vewarn >&2 "Attempting to read password from file" \
+			"'${MYSQL_ROOT_PASSWORD_FILE}' ..."
+		passwd="$(
+			sed 's/#.*$//' "${MYSQL_ROOT_PASSWORD_FILE}" 2>/dev/null |
+			grep -v '^\s\+$' |
+			tail -n 1
+		)" || eerror "Password could not be read: ${?}"
+	fi
+	if [[ -z "${passwd:-}" ]]; then
+		echo >&2 "Enter password for database 'root' user:"
+	fi
 	docker exec --interactive --tty "${container_name}" \
-		mysqlcheck -A -u root -p
+		mysqldump -u root "-p${passwd:-}" -h localhost "${mysqldump_args[@]}"
+}
+
+check() {
+	local passwd=''
+
+	if
+		[[ -n "${MYSQL_ROOT_PASSWORD_FILE:-}" ]] &&
+		[[ -f "${MYSQL_ROOT_PASSWORD_FILE}" ]] &&
+		[[ -s "${MYSQL_ROOT_PASSWORD_FILE}" ]]
+	then
+		vewarn >&2 "Attempting to read password from file" \
+			"'${MYSQL_ROOT_PASSWORD_FILE}' ..."
+		passwd="$(
+			sed 's/#.*$//' "${MYSQL_ROOT_PASSWORD_FILE}" 2>/dev/null |
+			grep -v '^\s\+$' |
+			tail -n 1
+		)" || eerror "Password could not be read: ${?}"
+	fi
+	if [[ -z "${passwd:-}" ]]; then
+		echo >&2 "Enter password for database 'root' user:"
+	fi
+	docker exec --interactive --tty "${container_name}" \
+		mysqlcheck -A -u root "-p${passwd:-}" -h localhost
 }
 
 upgrade() {
+	local passwd=''
+
+	if
+		[[ -n "${MYSQL_ROOT_PASSWORD_FILE:-}" ]] &&
+		[[ -f "${MYSQL_ROOT_PASSWORD_FILE}" ]] &&
+		[[ -s "${MYSQL_ROOT_PASSWORD_FILE}" ]]
+	then
+		vewarn >&2 "Attempting to read password from file" \
+			"'${MYSQL_ROOT_PASSWORD_FILE}' ..."
+		passwd="$(
+			sed 's/#.*$//' "${MYSQL_ROOT_PASSWORD_FILE}" 2>/dev/null |
+			grep -v '^\s\+$' |
+			tail -n 1
+		)" || eerror "Password could not be read: ${?}"
+	fi
+	if [[ -z "${passwd:-}" ]]; then
+		echo >&2 "Enter password for database 'root' user:"
+	fi
 	docker exec --interactive --tty "${container_name}" \
-		mysql_upgrade -u root -p -vvvv
+		mysql_upgrade -u root "-p${passwd:-}" -h localhost -vvvv
 }
 
 bootstrap_galera() {
