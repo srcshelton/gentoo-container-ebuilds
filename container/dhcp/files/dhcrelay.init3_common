@@ -26,11 +26,14 @@ dockeropts+=(
 	--cap-add NET_RAW
 	--cap-add SETGID
 	--cap-add SETUID
-
+)
+dockernetwork+=(
 	--network host
+)
+#dockerports+=(
 	#--publish 67:67/udp
 	#--publish 547:547/udp
-)
+#}
 
 dockermounts=( ${dockermount_defaults[@]} )
 
