@@ -42,7 +42,8 @@ dockeropts+=(
 	#--cap-drop ALL
 	--cap-add SETGID
 	--cap-add SETUID
-
+)
+dockernetwork+=(
 	--network host
 )
 
@@ -120,7 +121,7 @@ checkconfig() {
 				--replace \
 				--restart no \
 				--rm \
-			"${dockerimage}" -n ${OPENDKIM_ARGS} || rc=${?}
+			"localhost/${dockerimage}" -n ${OPENDKIM_ARGS} || rc=${?}
 	fi
 	eend ${rc} "${RC_SVCNAME} configuration check failed"
 
@@ -200,7 +201,7 @@ configure() {
 				--restart no \
 				--rm \
 				--entrypoint /usr/sbin/opendkim-genkey \
-			"${dockerimage}" \
+			"localhost/${dockerimage}" \
 				-b ${keysize} -D /var/lib/opendkim/ \
 				-s "${selector}" -d '(your domain)' && \
 			chgrp --no-dereference opendkim \
