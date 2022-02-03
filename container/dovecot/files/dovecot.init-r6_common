@@ -49,8 +49,11 @@ dockeropts+=(
 	--cap-add SYS_CHROOT
 
 	--workdir '/'
-
+)
+dockernetwork+=(
 	--network host
+)
+#dockerports+=(
 	#--publish 110:110/tcp
 	#--publish 143:143/tcp
 	#--publish 587:587/tcp
@@ -59,7 +62,7 @@ dockeropts+=(
 	#--publish 2000:2000/tcp              # sieve_deprecated
 	#--publish 4190:4190/tcp              # sieve
 	#--publish 127.0.0.1:24242:24242/tcp  # stats
-)
+#)
 
 dockermounts=(
 	${dockermount_defaults[@]}
