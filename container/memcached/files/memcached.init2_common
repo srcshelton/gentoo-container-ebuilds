@@ -44,11 +44,14 @@ dockeropts+=(
 	#--cap-drop ALL
 	--cap-add SETGID
 	--cap-add SETUID
-
+)
+dockernetwork+=(
 	--network host
+)
+#dockerports+=(
 	#--publish 11211:11211/tcp
 	#--publish 11211:11211/udp
-)
+#)
 
 dockermounts=(
 	${dockermount_syslog}
