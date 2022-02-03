@@ -42,13 +42,16 @@ dockeropts+=(
 
 	--hostname smtp
 	#--interactive
-
+)
+dockernetwork+=(
 	--network host
+)
+#dockerports+=(
 	#--publish 25:25/tcp
 	#--publish 465:465/tcp
 	#--publish 587:587/tcp
 	#--publish 127.0.0.1:9025:9025/tcp
-)
+#)
 
 dockermounts=(
 	${dockermount_syslog}
