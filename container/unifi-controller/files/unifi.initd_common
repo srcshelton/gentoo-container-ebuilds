@@ -53,8 +53,11 @@ dockeropts+=(
 	--cap-add NET_RAW
 
 	--env 'LOG4J_FORMAT_MSG_NO_LOOKUPS=true'
-
+)
+dockernetwork+=(
 	--network host
+)
+#dockerports+=(
 	# TODO: Check whether system.properties has changed these defaults...
 	#--publish 8080:8080/tcp  # Device inform
 	#--publish 8443:8443/tcp  # Controller UI/API
@@ -65,7 +68,7 @@ dockeropts+=(
 	#--publish 6789:6789/tcp  # Throughput measurement
 	#--publish 3478:3478/udp  # STUN
 	#--publish 127.0.0.1:${MONGOPORT}:${MONGOPORT}/tcp
-)
+#)
 
 dockermounts=(
 	${dockermount_syslog}
