@@ -12,6 +12,8 @@ command_opts="-D -P %PID% -u bitlbee -n -v ${BITLBEE_OPTS:-}"
 container_dir_owner='bitlbee'
 container_use_git="${BITLBEE_USE_GIT:-}"
 
+container_svc_wait=10
+
 . /etc/init.d/_containers_common || return ${?}
 
 dockeropts+=(
@@ -20,10 +22,13 @@ dockeropts+=(
 	--cap-add SETGID
 
 	--workdir "/var/lib/${PN}"
-
-	--network host
-	#--publish 6667:6667/tcp
 )
+dockernetwork+=(
+	--network host
+)
+#dockerports+=(
+	#--publish 6667:6667/tcp
+#}
 
 dockermounts=( ${dockermount_defaults[@]} )
 
