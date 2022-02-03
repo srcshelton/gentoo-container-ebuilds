@@ -18,7 +18,8 @@ container_use_pid=0
 
 dockeropts+=(
 	#--cap-drop ALL
-
+)
+dockernetwork+=(
 	--network none
 )
 
