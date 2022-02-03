@@ -47,11 +47,14 @@ dockeropts+=(
 	$( [[ -e /dev/xconsole ]] && echo '--device /dev/xconsole:/dev/xconsole' )
 
 	--workdir "${SYSLOG_NG_STATEFILE_DIR}"
-
+)
+dockernetwork+=(
 	--hostname "$( hostname -s )"
 	--network host
-	#--publish 514:514/udp
 )
+#dockerports+=(
+	#--publish 514:514/udp
+#)
 
 dockermounts=(
 	${dockermount_etc},ro=true
