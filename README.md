@@ -15,7 +15,7 @@ Modified ebuilds:
 
 * app-admin/webapp-config
 * dev-libs/libzip
-* mail-filter/postgrey
+* ~~mail-filter/postgrey~~
 * net-misc/dhcpcd
 * net-misc/ntp
 * net-misc/openntpd
