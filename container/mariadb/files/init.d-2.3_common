@@ -231,9 +231,26 @@ backup() {
 		#--host=localhost
 		--ignore-database='sys'
 		#--ignore-table-data=
-		#--ignore-table=
+		--ignore-table='mysql.column_stats'
+		--ignore-table='mysql.event'
+		--ignore-table='mysql.func'
+		--ignore-table='mysql.general_log'
+		--ignore-table='mysql.gtid_slave_pos'
+		--ignore-table='mysql.host'
+		--ignore-table='mysql.index_stats'
+		--ignore-table='mysql.innodb_index_stats'
+		--ignore-table='mysql.innodb_table_stats'
+		#--ignore-table='mysql.ndb_binlog_index'
+		--ignore-table='mysql.proc'
+		--ignore-table='mysql.slow_log'
+		--ignore-table='mysql.table_stats'
+		--ignore-table='mysql.time_zone'
+		--ignore-table='mysql.time_zone_leap_second'
+		--ignore-table='mysql.time_zone_name'
+		--ignore-table='mysql.time_zone_transition'
+		--ignore-table='mysql.time_zone_transition_type'
 		#--include-master-host-port	# ... with --dump-slave
-		--insert-ignore
+		--insert-ignore		# Generates invalid 'REPLACE IGNORE' syntax if used with --replace
 		#--lines-terminated-by=
 		#--lock-all-tables	# Disables --single-transaction and --lock-tables
 		#--lock-tables		# Default: on
@@ -255,7 +272,7 @@ backup() {
 		#--protocol=<tcp|socket|pipe>
 		--quick			# Default: on
 		--quote-names		# Default: on
-		--replace
+		#--replace		# Generates invalid 'REPLACE IGNORE' syntax if used with --insert-ignore
 		#--result-file=
 		--routines
 		--set-charset		# Default: on
@@ -303,8 +320,10 @@ backup() {
 	if [[ -z "${passwd:-}" ]]; then
 		echo >&2 "Enter password for database 'root' user:"
 	fi
+	ebegin >&2 "Starting mysql backup to /dev/stdout"
 	docker exec --interactive --tty "${container_name}" \
 		mysqldump -u root "-p${passwd:-}" -h localhost "${mysqldump_args[@]}"
+	eend >&2 ${?} "mysqldump failed: ${?}"
 }
 
 check() {
@@ -425,12 +444,12 @@ start_pre() {
 			eerror "System database '${datadir}/mysql' missing"
 
 			# find which package is installed to report an error
-			local EROOT="$ (portageq envvar EROOT )"
-			local DBPKG_P="$( portageq match ${EROOT} $(
-				portageq expand_virtual ${EROOT} virtual/mysql |
+			local EROOT="$( portageq envvar EROOT )"
+			local DBPKG_P="$( portageq match "${EROOT:-/}" $(
+				portageq expand_virtual "${EROOT:-/}" virtual/mysql |
 				head -n 1
 			) )"
-			if [ -z ${DBPKG_P} ] ; then
+			if [ -z ${DBPKG_P:-} ] ; then
 				eerror "You don't appear to have a server" \
 					"package installed yet."
 			else
@@ -473,6 +492,7 @@ init_mysql_database() {
 	_checkpaths || return ${?}
 
 	local DOCKER_SCRIPT="$( cat <<-EOF
+		echo " * Setting up environment ..." ;
 		inherit() { : ; } ;
 		use() { case "\${1:-}" in prefix) return 1 ;; *) return 0 ;; esac ; } ;
 		die() { echo -e "\${*:-Unknown error}" ; exit 1 ; } ;
@@ -481,7 +501,11 @@ init_mysql_database() {
 		rm -f "\${TMPDIR}/mysqld-help" ;
 		. /lib/gentoo/functions.sh ;
 		. <( bzcat /var/db/pkg/dev-db/mariadb-1*/environment.bz2 ) ;
+		echo " * Sourcing existing ebuild ..." ;
 		. \$( ls -1 /var/db/pkg/dev-db/mariadb-1*/*.ebuild ) ;
+		: echo " * Generating locales  ..." ;
+		: locale-gen -G 'C.UTF-8' ;
+		echo " * Running package setup ..." ;
 		pkg_config ;
 		rm -f "\${TMPDIR}/mysqld-help" ;
 	EOF
@@ -498,11 +522,13 @@ init_mysql_database() {
 			--cap-add SETUID \
 			--entrypoint=/bin/bash \
 			--env MYSQL_ROOT_PASSWORD \
+			--interactive \
 			--name "${container_name}-config" \
 			--network none \
 			--replace \
 			--restart no \
 			--rm \
+			--tty \
 			--user root:root \
 		"localhost/${dockerimage}" -c "${DOCKER_SCRIPT}"
 }
