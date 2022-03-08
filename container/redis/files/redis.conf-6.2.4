@@ -284,9 +284,9 @@ daemonize no
 # Creating a pid file is best effort: if Redis is not able to create it
 # nothing bad happens, the server will start and run normally.
 #
-# Note that on modern Linux systems "/run/redis.pid" is more conforming
+# Note that on modern Linux systems "/var/run/redis.pid" is more conforming
 # and should be used instead.
-pidfile /run/redis/redis.pid
+pidfile /var/run/redis/redis.pid
 
 # Specify the server verbosity level.
 # This can be one of:
