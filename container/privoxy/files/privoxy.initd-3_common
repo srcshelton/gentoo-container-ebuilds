@@ -1,0 +1,120 @@
+#!/sbin/openrc-run
+# Copyright 1999-2004 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${PRIVOXY_CONF:=/etc/${SVCNAME}/config}
+: ${PRIVOXY_PIDFILE:=/var/run/${SVCNAME}/${SVCNAME}.pid}
+
+podman_memory_size='tiny'
+
+PN="${RC_SVCNAME:=privoxy}" # PN='privoxy'
+PV='@PVR@'
+CATEGORY='net-proxy'
+container_svc_pid="${PRIVOXY_PIDFILE}"
+command_opts="--no-daemon --pidfile \"%PID%\" --user privoxy.privoxy \"${PRIVOXY_CONF}\""
+
+container_dir_owner='privoxy'
+container_dir_run="$( dirname "${container_svc_pid}" )"
+container_dir_run_owner='root'
+container_dir_run_group='root'
+container_use_git="${PRIVOXY_USE_GIT:-}"
+
+. /etc/init.d/_containers_common || return ${?}
+
+#svc_port="$(
+#	sudo sed 's/#.*$//' "${PRIVOXY_CONF}" |
+#		grep '^listen-address' |
+#		sed 's/^.*://' |
+#		sort |
+#		uniq
+#)"
+dockeropts+=(
+	#--cap-drop ALL
+#	--cap-add CHOWN
+#	--cap-add DAC_OVERRIDE
+#	--cap-add NET_BIND_SERVICE
+	--cap-add SETGID
+	--cap-add SETUID
+)
+dockernetwork+=(
+	--network host
+)
+#dockerports+=(
+	#--publish ${svc_port}:${svc_port}/tcp
+#)
+
+dockermounts=(
+	${dockermount_syslog}
+	${dockermount_etc},ro=true
+	${dockermount_log}
+	${dockermount_run}
+)
+
+_containers_set_args
+
+#command_user="privoxy:privoxy"
+retry='SIGKILL/5'
+
+description="A web proxy with advanced filtering capabilities for enhancing privacy"
+extra_commands="checkconfig"
+extra_stopped_commands="inspect"
+description_checkconfig="Validate the service's configuration"
+description_inspect="Launch container interactively"
+
+required_files="${PRIVOXY_CONF}"
+
+
+depend() {
+	need containers
+	use net
+}
+
+_checkpaths() {
+	if [[ -z "${container_svc_pid:-}" || "${container_svc_pid}" == '/' ]]; then
+		eerror "Could not determine ${SVCNAME} PID file location"
+		return 1
+	fi
+
+	_containers_check_paths
+}
+
+checkconfig() {
+	if [ ! -f "${PRIVOXY_CONF}" ] ; then
+		eerror "No ${PRIVOXY_CONF} file exists!"
+		return 1
+	fi
+
+	_checkpaths || return ${?}
+
+	ebegin "Checking ${SVCNAME} configuration"
+
+	if service_started; then
+		docker exec --user 'privoxy:privoxy' "${container_name}" \
+			privoxy --config-test "${PRIVOXY_CONF}"
+	else
+		docker run "${command_docker_args[@]:-}" \
+				--cap-drop ALL \
+				--entrypoint=/usr/sbin/privoxy \
+				--name "${container_name}-checkconfig" \
+				--network none \
+				--replace \
+				--restart no \
+				--rm \
+				--user 'privoxy:privoxy' \
+			"localhost/${dockerimage}" --config-test "${PRIVOXY_CONF}"
+	fi
+
+	eend $? "${SVCNAME} config check failed"
+} # checkconfig
+
+inspect() {
+	_containers_inspect
+}
+
+start_pre() {
+        checkconfig || return ${?}
+
+        _containers_start_pre || return ${?}
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:

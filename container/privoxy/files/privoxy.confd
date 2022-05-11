@@ -1,0 +1,5 @@
+# /etc/conf.d/privoxy: config file for /etc/init.d/privoxy
+
+# Check changes into a (pre-existing) git repo in /etc/privoxy?
+#PRIVOXY_USE_GIT=0
+

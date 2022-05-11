@@ -1,0 +1,17 @@
+/var/log/privoxy/privoxy.log /var/log/privoxy/jarfile {
+	compress
+	copytruncate
+	create 0640 privoxy privoxy
+	daily
+	missingok
+	notifempty
+	rotate 7
+
+	sharedscripts
+	postrotate
+		if [ -f /var/run/privoxy.pid ]; then \
+			kill -HUP `cat /var/run/privoxy.pid` >/dev/null 2>&1 \
+				|| true ; \
+		fi;
+	endscript
+}
