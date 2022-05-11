@@ -11,8 +11,8 @@ HOMEPAGE="https://www.lighttpd.net https://github.com/lighttpd"
 
 LICENSE="BSD GPL-2"
 SLOT="0"
-KEYWORDS="~alpha amd64 ~arm ~arm64 ~hppa ~ia64 ~mips ppc ~ppc64 ~riscv ~s390 sparc x86"
-#IUSE="brotli dbi doc gnutls ipv6 kerberos ldap +lua maxminddb mbedtls mmap mysql +nettle nss +pcre php postgres rrdtool sasl selinux sqlite ssl systemd +system-xxhash test unwind webdav xattr +zlib zstd"
+KEYWORDS="~alpha amd64 arm ~arm64 ~hppa ~ia64 ~mips ppc ppc64 ~riscv ~s390 sparc x86"
+#IUSE="+brotli dbi doc gnutls ipv6 kerberos ldap +lua maxminddb mbedtls mmap mysql +nettle nss +pcre php postgres rrdtool sasl selinux sqlite ssl systemd +system-xxhash test unwind webdav xattr +zlib zstd"
 IUSE="ipv6 php"
 #RESTRICT="!test? ( test )"
 
@@ -102,3 +102,5 @@ pkg_postinst() {
 	einfo
 	einfo "Please ensure that these directories are mounted when starting the ${PN} container"
 }
+
+# vi: set diffopt=filler,iwhite:

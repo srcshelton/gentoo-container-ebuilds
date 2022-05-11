@@ -11,16 +11,16 @@ HOMEPAGE="https://www.lighttpd.net https://github.com/lighttpd"
 
 LICENSE="BSD GPL-2"
 SLOT="0"
-KEYWORDS="~alpha amd64 ~arm ~arm64 ~hppa ~ia64 ~mips ppc ~ppc64 ~riscv ~s390 sparc x86"
-#IUSE="brotli dbi doc gnutls ipv6 kerberos ldap +lua maxminddb mbedtls mmap mysql +nettle nss +pcre php postgres rrdtool sasl selinux sqlite ssl systemd +system-xxhash test unwind webdav xattr +zlib zstd"
+KEYWORDS="~alpha amd64 arm ~arm64 ~hppa ~ia64 ~mips ~ppc ppc64 ~s390 sparc x86"
+#IUSE="brotli bzip2 dbi doc gdbm gnutls ipv6 kerberos ldap libev lua maxminddb mbedtls memcached mmap mysql nss pcre php postgres rrdtool sasl selinux sqlite ssl systemd test webdav xattr zlib zstd"
 IUSE="ipv6 php"
 #RESTRICT="!test? ( test )"
 
-BDEPEND="
+COMMON_DEPEND="
 	acct-group/lighttpd
 	acct-user/lighttpd"
 
-RDEPEND="${BDEPEND}
+RDEPEND="${COMMON_DEPEND}
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
 	!www-servers/lighttpd"
@@ -65,7 +65,7 @@ src_install() {
 
 	# configs
 	insinto /etc/lighttpd
-	newins "${FILESDIR}"/conf/lighttpd.conf-r1 lighttpd.conf
+	doins "${FILESDIR}"/conf/lighttpd.conf
 	doins "${FILESDIR}"/conf/mime-types.conf
 	doins "${FILESDIR}"/conf/mod_cgi.conf
 	doins "${FILESDIR}"/conf/mod_fastcgi.conf
@@ -74,7 +74,7 @@ src_install() {
 	update_config
 
 	# docs
-	if use ipv6; then readme.gentoo_create_doc; fi
+	use ipv6 && readme.gentoo_create_doc
 
 	# logrotate
 	insinto /etc/logrotate.d
@@ -86,13 +86,13 @@ src_install() {
 }
 
 pkg_postinst() {
-	if use ipv6; then readme.gentoo_print_elog; fi
+	use ipv6 && readme.gentoo_print_elog
 
 	elog
 	elog "Upstream has deprecated a number of features. They are not missing"
 	elog "but have been migrated to other mechanisms. Please see upstream"
 	elog "changelog for details."
-	elog "https://www.lighttpd.net/2022/1/19/1.4.64/"
+	elog "https://www.lighttpd.net/2021/2/2/1.4.59/"
 
 	einfo "The following container mounts are required for ${PN}:"
 	einfo
@@ -102,3 +102,5 @@ pkg_postinst() {
 	einfo
 	einfo "Please ensure that these directories are mounted when starting the ${PN} container"
 }
+
+# vi: set diffopt=filler,iwhite:
