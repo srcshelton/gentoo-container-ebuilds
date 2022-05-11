@@ -42,8 +42,8 @@ COMMON_DEPEND="
 RDEPEND="${COMMON_DEPEND}
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
-	!dev-lang/php
-	!app-eselect/eselect-php"
+	!app-eselect/eselect-php
+	!dev-lang/php"
 
 BDEPEND="${COMMON_DEPEND}"
 
