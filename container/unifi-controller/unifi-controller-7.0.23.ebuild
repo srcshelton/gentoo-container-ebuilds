@@ -25,12 +25,15 @@ KEYWORDS="~amd64 ~arm ~arm64 ~x86"
 RESTRICT="mirror"
 SLOT="0"
 
-RDEPEND="
+BDEPEND="
+	acct-group/unifi
+	acct-user/unifi"
+
+RDEPEND="${BDEPEND}
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
-	acct-group/unifi
-	acct-user/unifi
-"
+	!net-misc/unifi-controller-bin
+	!net-wireless/unifi"
 
 S="${WORKDIR}"
 

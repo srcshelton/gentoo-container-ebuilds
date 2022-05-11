@@ -2,12 +2,17 @@
 #
 #UNIFI_DIR="%INST_DIR%"
 
+# Container tunables...
+#CONTAINER_MAX_CPUS=1
+#CONTAINER_MAX_CPU_SHARES=1024
+
 # Optional JVM tunables...
 #
-#JAVA_ENTROPY_GATHER_DEVICE=
-#JVM_MAX_HEAP_SIZE=1024M
-#JVM_INIT_HEAP_SIZE=
 #JAVA_OPTS="-XX:+UseLargePages"
+#JAVA_ENTROPY_GATHER_DEVICE=
+#JVM_INIT_HEAP_SIZE=
+#JVM_MAX_CPUS=1
+#JVM_MAX_HEAP_SIZE=1024M
 
 # Replace the default self-signed certificate?
 #
