@@ -18,7 +18,8 @@ RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
 	acct-group/openntpd
-	acct-user/openntpd"
+	acct-user/openntpd
+	!net-misc/openntpd"
 
 S="${WORKDIR}"
 
