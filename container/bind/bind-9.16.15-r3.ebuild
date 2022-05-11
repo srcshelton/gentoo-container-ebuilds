@@ -1,9 +1,9 @@
-# Copyright 1999-2021 Gentoo Authors
+# Copyright 1999-2022 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
 
-PYTHON_COMPAT=( python3_{8..9} )
+PYTHON_COMPAT=( python3_{7..9} )
 
 DESCRIPTION="Berkeley Internet Name Domain - Name Server"
 HOMEPAGE="https://www.isc.org/software/bind"
@@ -12,18 +12,20 @@ HOMEPAGE="https://www.isc.org/software/bind"
 
 LICENSE="Apache-2.0 BSD BSD-2 GPL-2 HPND ISC MPL-2.0"
 SLOT="0"
-KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~mips ppc ppc64 ~riscv ~s390 sparc x86 ~amd64-linux ~x86-linux"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~mips ~ppc ppc64 ~s390 sparc x86 ~amd64-linux ~x86-linux"
+# -berkdb by default re bug 602682
 #IUSE="-berkdb +caps dlz dnsrps dnstap doc fixed-rrset geoip geoip2 gssapi json ldap lmdb mysql odbc postgres python selinux static-libs systemd +tmpfiles xml +zlib"
 IUSE="ldap mysql postgres"
 
 BDEPEND="
 	acct-group/named
-	acct-user/named"
-
-RDEPEND="${BDEPEND}
+	acct-user/named
+"
+RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
-	!net-dns/bind"
+	!net-dns/bind
+	${BDEPEND}"
 
 S="${WORKDIR}"
 
@@ -82,20 +84,15 @@ pkg_postinst() {
 	# This must be run from within the container...
 	#
 	#if [ ! -f "${ROOT}/etc/bind/rndc.key" ]; then
-	#	if [ -f "${ROOT}/etc/bind/rndc.conf" ]; then
-	#		ewarn "'${ROOT}/etc/bind/rndc.conf' exists - not generating new 'rndc.key'"
-	#	else
-	#		if [ "${ROOT}" != '/' ]; then
-	#			local -x LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${ROOT%/}/$(get_libdir):${ROOT%/}/usr/$(get_libdir)"
-	#		fi
-	#		"${ROOT}"/usr/sbin/rndc-confgen -a
-	#		# rndc-confgen always creates files in /etc/bind/...
+	#	if [ "${ROOT}" != '/' ]; then
+	#		local -x LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${ROOT%/}/$(get_libdir):${ROOT%/}/usr/$(get_libdir)"
+	#	fi
+	#	"${ROOT}"/usr/sbin/rndc-confgen -a
+	#	if [ -f /etc/bind/rndc.key ] && [ ! -f "${ROOT}"/etc/bind/rndc.key ]; then
+	#		cp -a /etc/bind/rndc.key "${ROOT}"/etc/bind/rndc.key
+	#	fi
 	#	chown root:named /etc/bind/rndc.key || die
 	#	chmod 0640 /etc/bind/rndc.key || die
-	#		if [ -f /etc/bind/rndc.key ] && [ ! -f "${ROOT}"/etc/bind/rndc.key ]; then
-	#			cp -a /etc/bind/rndc.key "${ROOT}"/etc/bind/rndc.key
-	#		fi
-	#	fi
 	#fi
 
 	einfo

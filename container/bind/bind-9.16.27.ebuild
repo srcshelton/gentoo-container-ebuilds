@@ -1,9 +1,9 @@
-# Copyright 1999-2021 Gentoo Authors
+# Copyright 1999-2022 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
 
-PYTHON_COMPAT=( python3_{8..9} )
+PYTHON_COMPAT=( python3_{8..10} )
 
 DESCRIPTION="Berkeley Internet Name Domain - Name Server"
 HOMEPAGE="https://www.isc.org/software/bind"
@@ -12,8 +12,8 @@ HOMEPAGE="https://www.isc.org/software/bind"
 
 LICENSE="Apache-2.0 BSD BSD-2 GPL-2 HPND ISC MPL-2.0"
 SLOT="0"
-KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~mips ppc ppc64 ~riscv ~s390 sparc x86 ~amd64-linux ~x86-linux"
-#IUSE="-berkdb +caps dlz dnsrps dnstap doc fixed-rrset geoip geoip2 gssapi json ldap lmdb mysql odbc postgres python selinux static-libs systemd +tmpfiles xml +zlib"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~mips ~ppc ppc64 ~riscv ~s390 sparc x86 ~amd64-linux ~x86-linux"
+#IUSE="berkdb +caps +dlz dnsrps dnstap doc fixed-rrset geoip geoip2 gssapi json ldap lmdb mysql odbc postgres python selinux static-libs systemd +tmpfiles xml +zlib"
 IUSE="ldap mysql postgres"
 
 BDEPEND="
@@ -81,8 +81,8 @@ src_install() {
 pkg_postinst() {
 	# This must be run from within the container...
 	#
-	#if [ ! -f "${ROOT}/etc/bind/rndc.key" ]; then
-	#	if [ -f "${ROOT}/etc/bind/rndc.conf" ]; then
+	#if [[ ! -f "${ROOT}/etc/bind/rndc.key" ]]; then
+	#	if [[ -f "${ROOT}/etc/bind/rndc.conf" ]]; then
 	#		ewarn "'${ROOT}/etc/bind/rndc.conf' exists - not generating new 'rndc.key'"
 	#	else
 	#		if [ "${ROOT}" != '/' ]; then
