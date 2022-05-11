@@ -21,7 +21,8 @@ RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
 	acct-group/memcached
-	acct-user/memcached"
+	acct-user/memcached
+	!net-misc/memcached"
 
 S="${WORKDIR}"
 
