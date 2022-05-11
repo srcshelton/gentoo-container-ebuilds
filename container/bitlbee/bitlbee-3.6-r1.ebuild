@@ -20,16 +20,15 @@ SLOT="0"
 #	test? ( plugins )
 #"
 
-RDEPEND="
-	|| ( app-containers/podman app-containers/docker )
-	app-containers/container-init-scripts
+BDEPEND="${PYTHON_DEPS}
 	acct-group/bitlbee
 	acct-user/bitlbee
-"
+	virtual/pkgconfig"
 
-BDEPEND="${PYTHON_DEPS}
-	virtual/pkgconfig
-"
+RDEPEND="${BDEPEND}
+	|| ( app-containers/podman app-containers/docker )
+	app-containers/container-init-scripts
+	!net-im/bitlbee"
 
 S="${WORKDIR}"
 
