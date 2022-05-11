@@ -30,13 +30,11 @@ S="${WORKDIR}"
 RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
-	dev-db/mysql-connector-c
 	acct-group/mysql
 	acct-user/mysql
-	!dev-db/mariadb[server]
+	dev-db/mysql-connector-c
 	client? ( dev-db/mariadb[-server] )
-"
-
+	!dev-db/mariadb[server]"
 
 mysql_init_vars() {
 	MY_SHAREDSTATEDIR=${MY_SHAREDSTATEDIR="${EPREFIX}/usr/share/mariadb"}

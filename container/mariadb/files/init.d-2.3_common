@@ -195,30 +195,30 @@ backup() {
 		--all-databases
 		--all-tablespaces
 		--add-drop-database
-		--add-drop-table	# Default: on
+		#--add-drop-table	# Default: on
 		--add-drop-trigger
-		--add-locks		# Deafult: on
+		#--add-locks		# Default: on
 		--allow-keywords
 		#--apply-slave-statements
 		#--character-sets-dir=/usr/share/mariadb/charsets
-		--comments		# Default: on
+		#--comments		# Default: on
 		#--compatible=<ansi|mysql323|mysql40|postgresql|oracle|mssql|db2|maxdb|no_key_options|no_table_options|no_field_options>
 		#--compact
-		--complete-insert
+		#--complete-insert	# Can bloat large backups...
 		#--compress
 		#--copy-s3-tables
-		--create-options	# Default: on
+		#--create-options	# Default: on
 		#--databases
 		#--debug
 		#--debug-check
 		#--debug-info
 		#--default-character-set=utf8mb4
-		--delayed-insert
+		#--delayed-insert	# Deprecated in MySQL 5.6.6, unsupported by InnoDB
 		#--delete-master-logs	# Enables --master-data
-		--disable-keys		# Default: on
+		#--disable-keys		# Default: on
 		#--dump-slave
 		--events
-		--extended-insert	# Default: on
+		#--extended-insert	# Default: on
 		#--fields-terminated-by=
 		#--fields-enclosed-by=
 		#--fields-optionally-enclosed-by=
@@ -252,7 +252,7 @@ backup() {
 		#--include-master-host-port	# ... with --dump-slave
 		--insert-ignore		# Generates invalid 'REPLACE IGNORE' syntax if used with --replace
 		#--lines-terminated-by=
-		#--lock-all-tables	# Disables --single-transaction and --lock-tables
+		--lock-all-tables	# Disables --single-transaction and --lock-tables, for databases with non-InnoDB tables
 		#--lock-tables		# Default: on
 		#--log-error=
 		#--log-queries
@@ -266,18 +266,18 @@ backup() {
 		#--no-data-med		# Default: on
 		#--no-set-names		# Same as --skip-set-charset
 		#--opt			# Same as --add-drop-table, --add-locks, --create-options, -quick, --extended-insert, --lock-tables, --set-charset, --disable-keys; Default: on
-		--order-by-primary
+		--order-by-primary	# Can lead to lopsided BTREE indices on reload...
 		#--password
 		#--port=3306
 		#--protocol=<tcp|socket|pipe>
-		--quick			# Default: on
-		--quote-names		# Default: on
+		#--quick		# Default: on
+		#--quote-names		# Default: on
 		#--replace		# Generates invalid 'REPLACE IGNORE' syntax if used with --insert-ignore
 		#--result-file=
 		--routines
-		--set-charset		# Default: on
-		--single-transaction	# Disables --lock-tables
-		--dump-date		# Default: on
+		#--set-charset		# Default: on
+		#--single-transaction	# Disables --lock-tables, for all-InnoDB databases
+		#--dump-date		# Default: on
 		#--skip-opt
 		#--socket=
 		#--ssl
@@ -293,10 +293,10 @@ backup() {
 		#--system=[all, users, plugins, udfs, servers, stats, timezones]
 		#--tab=
 		#--tables
-		--triggers		# Default: on
-		--tz-utc		# Default: on
+		#--triggers		# Default: on
+		#--tz-utc		# Default: on
 		#--user=root
-		--verbose
+		#--verbose
 		#--version
 		#--where=
 		#--xml
