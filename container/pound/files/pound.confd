@@ -1,0 +1,5 @@
+# /etc/conf.d/pound: config file for /etc/init.d/pound
+
+# Check changes into a (pre-existing) git repo in /etc/pound?
+#POUND_USE_GIT=0
+
