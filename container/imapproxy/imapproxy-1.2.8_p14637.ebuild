@@ -16,7 +16,8 @@ SLOT="0"
 
 RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
-	app-containers/container-init-scripts"
+	app-containers/container-init-scripts
+	!net-mail/imapproxy"
 
 S="${WORKDIR}"
 
