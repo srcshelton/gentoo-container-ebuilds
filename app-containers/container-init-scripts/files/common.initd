@@ -292,7 +292,7 @@ _containers_git_commit_changes() {
 			cat >> "${container_dir_etc}/.gitignore" <<-EOF
 				**/._cfg[0-9][0-9][0-9][0-9]_*
 				**/.keep*
-				**/.*.swp
+				**/.*.sw[a-p]
 			EOF
 			if [ -n "${container_git_ignore:-}" ]; then
 				cat >> "${container_dir_etc}/.gitignore" <<-EOF
