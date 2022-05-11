@@ -1,4 +1,4 @@
-# Copyright 1999-2021 Gentoo Authors
+# Copyright 1999-2022 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
@@ -9,10 +9,9 @@ HOMEPAGE="http://opendkim.org/"
 
 # The GPL-2 is for the init script, bug 425960.
 LICENSE="BSD GPL-2 Sendmail-Open-Source"
-KEYWORDS="amd64 ~arm ~arm64 x86"
-#IUSE="+berkdb diffheaders erlang experimental gnutls ldap libevent libressl lmdb lua -memcached opendbx poll querycache sasl selinux +ssl static-libs stats systemd test unbound"
-#RESTRICT="!test? ( test )"
 SLOT="0"
+KEYWORDS="amd64 ~arm ~arm64 x86"
+#IUSE="+berkdb diffheaders erlang experimental gnutls ldap libevent lmdb lua memcached opendbx poll querycache sasl selinux +ssl static-libs stats systemd test unbound"
 
 BDEPEND="
 	acct-group/opendkim"
@@ -31,6 +30,7 @@ RDEPEND="${BDEPEND}
 #	libevent? ( unbound )
 #	lua? ( ${LUA_REQUIRED_USE} )
 #	test? ( ${LUA_REQUIRED_USE} )"
+#RESTRICT="!test? ( test )"
 
 S="${WORKDIR}"
 
