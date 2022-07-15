@@ -34,7 +34,7 @@ container_dir_lib_mode='0750'
 container_dir_log_owner='dovecot'
 container_dir_log_group='mail'
 
-container_svc_wait=30
+container_svc_wait=40
 
 . /etc/init.d/_containers_common || return ${?}
 
