@@ -321,6 +321,14 @@ start_pre() {
 	fi
 }
 
+start_post() {
+	_containers_start_post
+
+	vebegin "Reducing priority of '${container_dir_owner:-unifi}' processes"
+	renice -n 18 -u "${container_dir_owner:-unifi}" >/dev/null
+	veend ${?} "renice() failed: ${?}"
+}
+
 info() {
 	if ! docker image ls "${dockerimage}" | grep -Fq -- 'localhost'; then
 		eerror "Container image '${dockerimage}' not found"
