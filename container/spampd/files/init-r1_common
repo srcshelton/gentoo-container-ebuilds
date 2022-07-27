@@ -35,12 +35,15 @@ dockeropts+=(
 	--cap-add DAC_OVERRIDE
 	--cap-add SETGID
 	--cap-add SETUID
-
+)
+dockernetwork+=(
 	--network host
+)
+#dockerports+=(
 	#--publish 10025:10025/tcp
 	#${svc_port:+--network host}
 	#${svc_port:+--publish ${svc_port}:${svc_port}/tcp}
-)
+#)
 
 dockermounts=(
 	${dockermount_syslog}
@@ -100,6 +103,9 @@ update() {
 	CATEGORY='mail-filter'
 	dockeropts=(
 		#--log-level debug
+
+		#--env DEBUG=1
+		#--env TRACE=1
 
 		--cap-drop ALL
 		--cap-add SETGID
