@@ -17,6 +17,8 @@
 set -o pipefail >/dev/null 2>&1 || :
 
 case "${podman_memory_size:-}" in
+	# Set swap for memory sizes over 1GB to be sqrt(MEMORY_LIMIT), rounded
+	# up...
 	tiny)
 		# Tiny
 		: "${PODMAN_MEMORY_RESERVATION:=256m}"
@@ -33,19 +35,19 @@ case "${podman_memory_size:-}" in
 		# Medium
 		: "${PODMAN_MEMORY_RESERVATION:=1g}"
 		: "${PODMAN_MEMORY_LIMIT:=2g}"
-		: "${PODMAN_SWAP_LIMIT:=4g}"
+		: "${PODMAN_SWAP_LIMIT:=3g}"
 		;;
 	large)
 		# Large
 		: "${PODMAN_MEMORY_RESERVATION:=2g}"
 		: "${PODMAN_MEMORY_LIMIT:=4g}"
-		: "${PODMAN_SWAP_LIMIT:=8g}"
+		: "${PODMAN_SWAP_LIMIT:=6g}"
 		;;
 	xl|extra-large)
 		# Extra-Large
 		: "${PODMAN_MEMORY_RESERVATION:=4g}"
 		: "${PODMAN_MEMORY_LIMIT:=8g}"
-		: "${PODMAN_SWAP_LIMIT:=16g}"
+		: "${PODMAN_SWAP_LIMIT:=11g}"
 		;;
 	'')
 		: ;;
@@ -188,8 +190,8 @@ _containers_set_args() {
 		${dockerports[@]:-}
 	)
 	command_docker_pid_args=(
-		--conmon-pidfile="${pidfile%.pid}.conmon.pid"
-		--cidfile="${pidfile%.pid}.cid"
+		--conmon-pidfile "${pidfile%.pid}.conmon.pid"
+		--cidfile "${pidfile%.pid}.cid"
 
 		# New with podman-3.2.0, we could use:
 		#--pidfile="${pidfile%.pid}.init.pid"
@@ -198,8 +200,9 @@ _containers_set_args() {
 		# give better tracking in the event of a non-clean startup.
 	)
 	command_docker_daemon_args=(
-		--systemd=false
-		--sdnotify=conmon
+		--image-volume tmpfs
+		--sdnotify conmon
+		--systemd false
 	)
 	#shellcheck disable=SC2034,SC2116,SC2154
 	command_args="run $( echo "${command_docker_args[*]:-}" \
