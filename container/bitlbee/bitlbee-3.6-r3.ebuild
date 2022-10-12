@@ -4,14 +4,14 @@
 EAPI=8
 
 #SRC_URI="https://get.bitlbee.org/src/${P}.tar.gz"
-KEYWORDS="~amd64"
+KEYWORDS="amd64 ~arm64 ppc ~ppc64 x86"
 DESCRIPTION="irc to IM gateway that support multiple IM protocols"
 HOMEPAGE="https://www.bitlbee.org/"
 
 LICENSE="GPL-2"
 SLOT="0"
-#IUSE_PROTOCOLS="msn oscar purple twitter +xmpp"
-#IUSE="debug +gnutls ipv6 libevent msn nss oscar otr +plugins purple selinux systemd test twitter xinetd +xmpp"
+#IUSE_PROTOCOLS="purple twitter +xmpp"
+#IUSE="debug +gnutls ipv6 libevent nss otr +plugins purple selinux systemd test twitter xinetd +xmpp"
 #RESTRICT="!test? ( test )"
 
 BDEPEND="
