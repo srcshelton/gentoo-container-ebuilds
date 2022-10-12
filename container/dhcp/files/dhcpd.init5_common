@@ -68,6 +68,8 @@ dockernetwork+=(
 
 dockermounts=( ${dockermount_defaults[@]} )
 
+container_stop_timeout=5
+
 _containers_set_args
 
 #command_user="dhcp:dhcp"
