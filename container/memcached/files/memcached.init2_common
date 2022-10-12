@@ -31,10 +31,11 @@ PN="${RC_SVCNAME:=memcached}" # PN='memcached'
 PV='@PVR@'
 CATEGORY='net-misc'
 container_svc_pid="${PIDFILE}"
-command_opts="$( echo "${SOCKET:--p ${PORT} -U ${UDPPORT}${LISTENON:+ -l ${LISTENON}}}" \
-	"${SOCKET:+-s ${SOCKET}${SOCKET_MARK:+ -a ${SCOCKET_MASK}}}" \
-	"-m ${MEMUSAGE} -c ${MAXCONN} -u ${MEMCACHED_RUNAS}" \
-	"-P '%PID%' ${MISC_OPTS}" )"
+command_opts="$( echo \
+	"${SOCKET:-"--port=${PORT} --udp-port=${UDPPORT}${LISTENON:+" --listen=${LISTENON}"}"}" \
+	"${SOCKET:+"--unix-socket=${SOCKET}${SOCKET_MASK:+" --unix-mask=${SCOCKET_MASK}"}"}" \
+	"--memory-limit=${MEMUSAGE} --conn-limit=${MAXCONN}" \
+	"--user=${MEMCACHED_RUNAS} --pidfile='%PID%' ${MISC_OPTS}" )"
 
 container_use_pid=0
 
