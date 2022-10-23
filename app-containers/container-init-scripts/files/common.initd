@@ -91,8 +91,8 @@ then
 	return 1
 fi
 
-dockerimage="${dockerimage-service.${CATEGORY}.${PN}:${PV}}"
-container_name="${container_name-openrc-${PNV:-${PN}}-${PV}}"
+dockerimage="${dockerimage-"service.${CATEGORY}.${PN}:${PV}"}"
+container_name="${container_name-"openrc-${PNV:-"${PN}"}-${PV}"}"
 dockeropts+=(
 	#--log-level debug
 
@@ -162,8 +162,8 @@ container_svc_pid="${container_svc_pid-${container_dir_run-/var/run/${PN}}/${RC_
 command_background="true"
 start_stop_daemon_wait=1000
 start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" \
-	"--stdout /var/log/${PN}/${command}-${PNV:-${RC_SVCNAME}}.log" \
-	"--stderr /var/log/${PN}/${command}-${PNV:-${RC_SVCNAME}}.log" )"
+	"--stdout /var/log/${PN}/${command}-${PNV:-"${RC_SVCNAME}"}.log" \
+	"--stderr /var/log/${PN}/${command}-${PNV:-"${RC_SVCNAME}"}.log" )"
 pidfile="/var/run/containers/${RC_SVCNAME}.pid"
 #retry='TERM/10/KILL/2'
 
@@ -261,25 +261,33 @@ _containers_check_paths() {
 } # _containers_check_paths
 
 _containers_inspect() {
-	local id=''
+	local id='' filter=''
 
+	filter="name=${container_name_root:-"${container_name}"}-inspect"
 	id="$(
 		docker ps -a \
-			--filter "name=${container_name_root:-${container_name}}-inspect" \
+			--filter "${filter}" \
 			--format '{{.ID}}' 2>/dev/null
 	)"
 	if [ -n "${id}" ]; then
+		einfo "Removing container and values with ID '${id}' (${filter}) ..."
 		docker rm --volumes "${id}" >/dev/null 2>&1
+	else
+		ewarn "Not removing any previous container"
 	fi
 
+	einfo "Launching image 'localhost/${dockerimage}' as '${container_name_root:-"${container_name}"}-inspect' ..."
 	docker --log-level=info run "${command_docker_args[@]:-}" \
 			--entrypoint=/bin/sh \
 			--interactive \
-			--name "${container_name_root:-${container_name}}-inspect" \
+			--name "${container_name_root:-"${container_name}"}-inspect" \
+			--network host \
 			--replace \
 			--restart no \
 			--rm \
 		"localhost/${dockerimage}"
+
+	veinfo "exit(${?})"
 } # _containers_inspect
 
 _containers_git_commit_changes() {
