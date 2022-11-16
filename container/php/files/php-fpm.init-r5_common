@@ -68,6 +68,7 @@ dockermounts=(
 	${dockermount_log}
 	${dockermount_run}
 	--mount type=bind,source=/var/run/mysqld/,destination=/var/run/mysqld/,ro=true
+	--mount type=bind,source=/var/run/redis/,destination=/var/run/redis/,ro=true
 	--mount type=bind,source=/etc/php/,destination=/etc/php/,ro=true
 )
 if [ -d /var/www/localhost/htdocs ]; then
