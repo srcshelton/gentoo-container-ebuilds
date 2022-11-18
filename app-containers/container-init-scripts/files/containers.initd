@@ -34,7 +34,7 @@ _migrate_run_root() {
 	#if ! runroot="$( readlink -e "$(
 	#	docker info | grep -F 'runRoot' | awk -F': ' '{ print $2 }'
 	#)" )" ; then
-	if ! runroot="$( readlink -m "$(
+	if ! runroot="$( readlink -m "$( # <- Syntax highlight failure
 		sed 's/#.*$//' /etc/containers/storage.conf |
 		grep -i "^\s*runroot\s*=\s*['\"]\?.*['\"]\?\s*$" |
 		awk -F'"' '{ print $2 }'
