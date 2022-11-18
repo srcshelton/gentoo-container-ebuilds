@@ -4,16 +4,17 @@
 EAPI=7
 
 #MY_P="Mail-SpamAssassin-${PV//_/-}"
+S="${WORKDIR}"
 DESCRIPTION="An extensible mail filter which can identify and tag spam"
 HOMEPAGE="https://spamassassin.apache.org/"
 #SRC_URI="mirror://apache/spamassassin/source/${MY_P}.tar.bz2"
 
 LICENSE="Apache-2.0 GPL-2"
-KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ppc ppc64 ~s390 sparc x86 ~amd64-linux ~x86-linux"
+SLOT="0"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ppc ppc64 ~riscv ~s390 sparc x86 ~amd64-linux ~x86-linux"
 #IUSE="+berkdb cron dkim geoip ipv6 largenet ldap mysql office pacct postgres qmail razor +sa-update spf sqlite ssl systemd test unicode"
 IUSE="cron mysql postgres"
 #RESTRICT="!test? ( test )"
-SLOT="0"
 
 # The Makefile.PL script checks for dependencies, but only fails if a
 # required (i.e. not optional) dependency is missing. We therefore
@@ -24,8 +25,6 @@ RDEPEND="
 	acct-user/spamd
 	acct-group/spamd
 	!mail-filter/spamassassin"
-
-S="${WORKDIR}"
 
 src_prepare() {
 	local f
