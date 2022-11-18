@@ -7,12 +7,12 @@ EAPI=7
 DESCRIPTION="Proxy IMAP transactions between an IMAP client and an IMAP server"
 HOMEPAGE="https://sourceforge.net/projects/squirrelmail/"
 #SRC_URI="https://sourceforge.net/code-snapshots/svn/s/sq/squirrelmail/code/squirrelmail-code-r${PV#*_p}-trunk.zip"
+#RESTRICT="mirror"
 
 LICENSE="GPL-2"
+SLOT="0"
 KEYWORDS="amd64 ~ppc x86"
 #IUSE="kerberos ssl +tcpd"
-#RESTRICT="mirror"
-SLOT="0"
 
 RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
