@@ -1,4 +1,4 @@
-# Copyright 1999-2020 Gentoo Authors
+# Copyright 1999-2021 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
@@ -12,10 +12,9 @@ HOMEPAGE="http://memcached.org/"
 #	https://www.memcached.org/files/old/${MY_P}.tar.gz"
 
 LICENSE="BSD"
-KEYWORDS="~alpha amd64 ~arm ~arm64 ~hppa ~ia64 ~mips ~ppc ~ppc64 ~s390 ~sparc x86 ~amd64-linux ~x86-linux ~ppc-macos ~x86-macos"
-#IUSE="debug sasl seccomp selinux slabs-reassign test" # hugetlbfs later
-#RESTRICT="!test? ( test )"
 SLOT="0"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~mips ppc ppc64 ~s390 sparc x86 ~amd64-linux ~x86-linux ~ppc-macos"
+#IUSE="debug sasl seccomp selinux slabs-reassign systemd test"
 
 RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
@@ -25,6 +24,8 @@ RDEPEND="
 	!net-misc/memcached"
 
 S="${WORKDIR}"
+
+#RESTRICT="!test? ( test )"
 
 src_prepare() {
 	local f
