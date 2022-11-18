@@ -6,6 +6,7 @@ EAPI=7
 DESCRIPTION="Open source DMARC implementation"
 HOMEPAGE="http://www.trusteddomain.org/opendmarc/"
 #SRC_URI="https://github.com/trusteddomainproject/OpenDMARC/archive/rel-${PN}-${PV//./-}.tar.gz -> ${P}.tar.gz"
+S="${WORKDIR}"
 
 LICENSE="BSD"
 SLOT="0/3"  # 1.4 has API breakage with 1.3, yet uses same soname
@@ -19,8 +20,6 @@ RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
 	!mail-filter/opendmarc"
-
-S="${WORKDIR}"
 
 src_prepare() {
 	local f=''
@@ -41,10 +40,7 @@ src_prepare() {
 }
 
 src_install() {
-	local config_user=''
-
-	config_user="$( usex milter 'milter' 'opendmarc' )"
-
+	#local config_user=''
 	default
 
 	newinitd "${T}"/opendmarc.initd_common opendmarc
@@ -53,6 +49,7 @@ src_install() {
 	insinto /etc/opendmarc
 
 	#config_user="$( usex milter 'milter' 'opendmarc' )"
+
 	# create config file
 	doins "${T}"/opendmarc.conf
 
