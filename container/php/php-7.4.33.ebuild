@@ -29,7 +29,7 @@ S="${WORKDIR}"
 
 # SAPIs and SAPI-specific USE flags (cli SAPI is default on):
 #IUSE="acl apache2 argon2 bcmath berkdb bzip2 calendar cdb cgi cjk +cli coverage +ctype curl debug embed enchant exif ffi +fileinfo +filter firebird +flatfile fpm ftp gd gdbm gmp +iconv imap inifile intl iodbc ipv6 +jit +json kerberos ldap ldap-sasl libedit lmdb mhash mssql mysql mysqli nls oci8-instant-client odbc +opcache pcntl pdo +phar phpdbg +posix postgres qdbm readline selinux +session session-mm sharedmem +simplexml snmp soap sockets sodium spell sqlite ssl systemd sysvipc test threads tidy +tokenizer tokyocabinet truetype unicode webp +xml xmlreader xmlrpc xmlwriter xpm xslt zip zlib"
-IUSE="bcmath +fpm gd test unicode zlib"
+IUSE="bcmath +fpm gd +mysql +redis test unicode zlib"
 
 REQUIRED_USE="
 	gd? ( zlib )
@@ -58,6 +58,15 @@ src_prepare() {
 			-e "s#@CPVR@#$( best_version -r container/lighttpd | sed 's|^container/lighttpd-||' )#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
 	done
+
+	if ! use mysql; then
+		sed -i "${T}/php-fpm.init-r5_common" \
+			-e '|--mount type=bind,source=/var/run/mysqld/|d' || die
+	fi
+	if ! use redis; then
+		sed -i "${T}/php-fpm.init-r5_common" \
+			-e '|--mount type=bind,source=/var/run/redis/|d' || die
+	fi
 
 	default
 }
