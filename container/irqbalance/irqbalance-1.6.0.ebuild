@@ -10,9 +10,9 @@ HOMEPAGE="https://github.com/Irqbalance/irqbalance"
 #SRC_URI="https://github.com/Irqbalance/${PN}/archive/v${PV}.tar.gz -> ${P}.tar.gz"
 
 LICENSE="GPL-2"
+SLOT="0"
 KEYWORDS="amd64 ~arm ~arm64 ppc ~ppc64 x86"
 #IUSE="caps +numa selinux systemd tui"
-SLOT="0"
 
 RDEPEND="
 	|| ( app-containers/podman app-containers/docker )"
