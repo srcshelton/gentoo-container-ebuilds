@@ -13,7 +13,7 @@ getconfval() {
 	# setup to enter the container and the configuration values only
 	# obtainable from the service binary itself:
 	#
-	#"$( which lighttpd )" -pf "${LIGHTTPD_CONF}" |
+	#"$( type -pf lighttpd )" -pf "${LIGHTTPD_CONF}" |
 	#	sed 's/#.*$//' |
 	#	grep -F "server.${val}" |
 	#	cut -d '=' -f 2- |
