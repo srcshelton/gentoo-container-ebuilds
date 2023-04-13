@@ -83,7 +83,7 @@ retry="${STOP_TIMEOUT}"
 
 description="An enhanced, drop-in replacement for MySQL"
 extra_commands="checkconfig"
-extra_started_commands="backup check reload upgrade"
+extra_started_commands="backup check reload upgrade forceupgrade"
 extra_stopped_commands="bootstrap_galera init_mysql_database"
 description_backup="Output (to stdout) a dump of all databases"
 description_bootstrap_galera="Start a new Galera cluster with this server as the initial node"
@@ -92,6 +92,7 @@ description_check="Run mysqlcheck against running database instance"
 description_init_mysql_database="Initialise a new, blank system database"
 description_reload="Reload the grant tables and flush tables, logs, thread, and host cache"
 description_upgrade="Run mysql_upgrade against running database instance"
+description_forceupgrade="Run mysql_upgrade against running database instance with --force option"
 
 required_files="${MY_CNF}"
 
@@ -350,7 +351,11 @@ check() {
 }
 
 upgrade() {
-	local passwd=''
+	local passwd='' force="${1:-}"
+
+	if [[ -n "${force:-}" ]]; then
+		ewarn "Forcing upgrade due to '${force}' parameter"
+	fi
 
 	if
 		[[ -n "${MYSQL_ROOT_PASSWORD_FILE:-}" ]] &&
@@ -369,7 +374,12 @@ upgrade() {
 		echo >&2 "Enter password for database 'root' user:"
 	fi
 	docker exec --interactive --tty "${container_name}" \
-		mysql_upgrade -u root "-p${passwd:-}" -h localhost -vvvv
+		mysql_upgrade -u root "-p${passwd:-}" -h localhost -vvvv \
+		${force:+--force}
+}
+
+forceupgrade() {
+	upgrade force
 }
 
 bootstrap_galera() {
@@ -389,7 +399,7 @@ start_pre() {
 	container_use_git="${MYSQLD_USE_GIT:-}"
 
 	# Check for old conf.d variables that mean migration was not yet done.
-	set | egrep -sq '^(mysql_slot_|MYSQL_BLOG_PID_FILE|STOPTIMEOUT)'
+	set | grep -Esq '^(mysql_slot_|MYSQL_BLOG_PID_FILE|STOPTIMEOUT)'
 	rc=$?
 	# Yes, MYSQL_INIT_I_KNOW_WHAT_I_AM_DOING is a hidden variable.
 	# It does have a use in testing, as it is possible to build a config
@@ -492,6 +502,9 @@ init_mysql_database() {
 	_checkpaths || return ${?}
 
 	local DOCKER_SCRIPT="$( cat <<-EOF
+		tab=$'\t'
+		nl='
+		'
 		echo " * Setting up environment ..." ;
 		inherit() { : ; } ;
 		use() { case "\${1:-}" in prefix) return 1 ;; *) return 0 ;; esac ; } ;
@@ -506,7 +519,7 @@ init_mysql_database() {
 		: echo " * Generating locales  ..." ;
 		: locale-gen -G 'C.UTF-8' ;
 		echo " * Running package setup ..." ;
-		pkg_config ;
+		pkg_config | sed --unbuffered "s/\\\t/${tab}/g ; s/\\\n/${nl}/g" ;
 		rm -f "\${TMPDIR}/mysqld-help" ;
 	EOF
 	)"
