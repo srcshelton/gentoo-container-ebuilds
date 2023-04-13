@@ -8,18 +8,36 @@ getconfval() {
 	[ -n "${val:-}" ] || return 1
 	[ -s "${LIGHTTPD_CONF:-}" ] || return 1
 
+	# We can't do this, as '/usr/sbin/lighttpd' may only exist within the
+	# container, and we have a circular dependency between the required
+	# setup to enter the container and the configuration values only
+	# obtainable from the service binary itself:
+	#
+	#"$( type -pf lighttpd )" -pf "${LIGHTTPD_CONF}" |
+	#	sed 's/#.*$//' |
+	#	grep -F "server.${val}" |
+	#	cut -d '=' -f 2- |
+	#	tr -d '"' |
+	#	xargs -rn 1 |
+	#	sort |
+	#	uniq |
+	#	tail -n 1
+	#
 	{
-		# Quoting is horrible...
+		# This quoting is horrible (replace a literal double-quote with
+		# an empty string)...
 		sub='"\"",""'
 
 		sed 's/#.*$//' "${LIGHTTPD_CONF}" |
-		grep -v '^\s*$' |
-		awk "
-			/^server.${val}/	{ s = \$3 } ;
-						{ sub(${sub},s) } ;
-			END			{ print s }
-		" |
-		tail -n 1
+			grep -v '^\s*$' |
+			awk -v s='' "
+				/^server.${val}/	{
+								s = \$3 ;
+								gsub(${sub},s)
+							} ;
+				END			{ print s }
+			" |
+			tail -n 1
 	} 2>/dev/null
 }
 
@@ -28,7 +46,7 @@ getconfval() {
 : ${LIGHTTPD_GROUP:=$( getconfval 'groupname' )}
 : ${LIGHTTPD_PID:=$( getconfval 'pid-file' )}
 
-podman_memory_size='tiny'
+podman_memory_size='micro'
 
 CONTENT_IMAGE='service.www-servers.web-content:latest'
 PHP_VER='@PPV@'
@@ -98,7 +116,7 @@ _containers_set_args
 dockerports=()
 #need_net_bind_service=1
 #for svc_port in $(
-#	cat /etc/lighttpd/lighttpd.conf /etc/lighttpd/sites/*.conf 2>/dev/null |
+#	cat "${LIGHTTPD_CONF}" "$( dirname "${LIGHTTPD_CONF}" )"/sites/*.conf 2>/dev/null |
 #		sed 's/#.*$//' |
 #		grep -E 'server.port|\$SERVER\["socket"\]' |
 #		rev |
@@ -106,7 +124,7 @@ dockerports=()
 #		cut -d':' -f 1 |
 #		rev |
 #		cut -d'"' -f 1 |
-#		awk '{ print $1 }' |
+#		xargs -rn 1 |
 #		sort |
 #		uniq
 #); do
@@ -144,7 +162,7 @@ depend() {
 }
 
 checkconfig() {
-	if [ ! -f "${LIGHTTPD_CONF}" ] ; then
+	if ! [ -f "${LIGHTTPD_CONF}" ] ; then
 		eerror "Configuration file '${LIGHTTPD_CONF}' does not exist"
 		return 1
 	fi
@@ -196,7 +214,7 @@ checkconfig() {
 }
 
 inspect() {
-	checkconfig || return ${?}
+	checkconfig || ewarn "checkconfig() failed - entering container ..."
 
 	_containers_inspect
 }
@@ -353,7 +371,7 @@ stop_post() {
 
 	if [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
 		if id="$( docker ps -a \
-			--filter "name=${container_name_root}.web-content" \
+			--filter "name=${content_name}" \
 			--format '{{.ID}}' 2>/dev/null
 		)" && [ -n "${id:-}" ]; then
 			docker rm --volumes "${id}" >/dev/null 2>&1

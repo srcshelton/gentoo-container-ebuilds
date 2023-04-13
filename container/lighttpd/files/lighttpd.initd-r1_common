@@ -46,7 +46,7 @@ getconfval() {
 : ${LIGHTTPD_GROUP:=$( getconfval 'groupname' )}
 : ${LIGHTTPD_PID:=$( getconfval 'pid-file' )}
 
-podman_memory_size='tiny'
+podman_memory_size='micro'
 
 CONTENT_IMAGE='service.www-servers.web-content:latest'
 PHP_VER='@PPV@'
