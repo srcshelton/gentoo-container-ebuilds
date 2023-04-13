@@ -19,35 +19,53 @@ set -o pipefail >/dev/null 2>&1 || :
 case "${podman_memory_size:-}" in
 	# Set swap for memory sizes over 1GB to be sqrt(MEMORY_LIMIT), rounded
 	# up...
+	pico)
+		# Pico
+		: "${PODMAN_MEMORY_RESERVATION:="16m"}"
+		: "${PODMAN_MEMORY_LIMIT:="32m"}"
+		#: "${PODMAN_SWAP_LIMIT:="1g"}"
+		;;
+	nano)
+		# Nano
+		: "${PODMAN_MEMORY_RESERVATION:="32m"}"
+		: "${PODMAN_MEMORY_LIMIT:="64m"}"
+		#: "${PODMAN_SWAP_LIMIT:="1g"}"
+		;;
+	micro)
+		# Micro
+		: "${PODMAN_MEMORY_RESERVATION:="128m"}"
+		: "${PODMAN_MEMORY_LIMIT:="256m"}"
+		#: "${PODMAN_SWAP_LIMIT:="1g"}"
+		;;
 	tiny)
 		# Tiny
-		: "${PODMAN_MEMORY_RESERVATION:=256m}"
-		: "${PODMAN_MEMORY_LIMIT:=512m}"
-		: "${PODMAN_SWAP_LIMIT:=1g}"
+		: "${PODMAN_MEMORY_RESERVATION:="256m"}"
+		: "${PODMAN_MEMORY_LIMIT:="512m"}"
+		#: "${PODMAN_SWAP_LIMIT:="1g"}"
 		;;
 	small)
 		# Small
-		: "${PODMAN_MEMORY_RESERVATION:=512m}"
-		: "${PODMAN_MEMORY_LIMIT:=1g}"
-		: "${PODMAN_SWAP_LIMIT:=2g}"
+		: "${PODMAN_MEMORY_RESERVATION:="512m"}"
+		: "${PODMAN_MEMORY_LIMIT:="1g"}"
+		#: "${PODMAN_SWAP_LIMIT:="2g"}"
 		;;
 	medium)
 		# Medium
-		: "${PODMAN_MEMORY_RESERVATION:=1g}"
-		: "${PODMAN_MEMORY_LIMIT:=2g}"
-		: "${PODMAN_SWAP_LIMIT:=3g}"
+		: "${PODMAN_MEMORY_RESERVATION:="1g"}"
+		: "${PODMAN_MEMORY_LIMIT:="2g"}"
+		#: "${PODMAN_SWAP_LIMIT:="3g"}"
 		;;
 	large)
 		# Large
-		: "${PODMAN_MEMORY_RESERVATION:=2g}"
-		: "${PODMAN_MEMORY_LIMIT:=4g}"
-		: "${PODMAN_SWAP_LIMIT:=6g}"
+		: "${PODMAN_MEMORY_RESERVATION:="2g"}"
+		: "${PODMAN_MEMORY_LIMIT:="4g"}"
+		#: "${PODMAN_SWAP_LIMIT:="6g"}"
 		;;
 	xl|extra-large)
 		# Extra-Large
-		: "${PODMAN_MEMORY_RESERVATION:=4g}"
-		: "${PODMAN_MEMORY_LIMIT:=8g}"
-		: "${PODMAN_SWAP_LIMIT:=11g}"
+		: "${PODMAN_MEMORY_RESERVATION:="4g"}"
+		: "${PODMAN_MEMORY_LIMIT:="8g"}"
+		#: "${PODMAN_SWAP_LIMIT:="11g"}"
 		;;
 	'')
 		: ;;
@@ -55,6 +73,7 @@ case "${podman_memory_size:-}" in
 		ewarn "Unknown memory profile '${podman_memory_size}'"
 		;;
 esac
+: "${PODMAN_SWAP_LIMIT:="${PODMAN_MEMORY_LIMIT}"}"
 
 command="docker"
 if type -pf podman >/dev/null; then
@@ -63,7 +82,7 @@ if type -pf podman >/dev/null; then
 		test "${1:-}" = 'rm' && trap '' INT ;
 		podman ${@+"${@}"} ;
 		trap - INT ;
-	}
+	} # docker
 	export -f docker
 fi
 
@@ -165,9 +184,11 @@ start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" \
 	"--stdout /var/log/${PN}/${command}-${PNV:-"${RC_SVCNAME}"}.log" \
 	"--stderr /var/log/${PN}/${command}-${PNV:-"${RC_SVCNAME}"}.log" )"
 pidfile="/var/run/containers/${RC_SVCNAME}.pid"
-#retry='TERM/10/KILL/2'
 
-container_stop_timeout=30
+container_stop_timeout=31
+# Default 'podman stop' timeout is 10 seconds...
+#retry='TERM/11/KILL/2'
+retry="TERM/$(( container_stop_timeout + 1 ))/KILL/2"
 
 name="containerised ${RC_SVCNAME}"
 #description=''
@@ -214,7 +235,7 @@ _containers_set_args() {
 	)"
 
 	return 0
-}
+} # _containers_set_args
 
 _containers_check_paths() {
 	set -u
@@ -264,7 +285,7 @@ _containers_inspect() {
 	local id='' filter=''
 
 	filter="name=${container_name_root:-"${container_name}"}-inspect"
-	id="$(
+	id="$( # <- Syntax
 		docker ps -a \
 			--filter "${filter}" \
 			--format '{{.ID}}' 2>/dev/null
@@ -440,8 +461,20 @@ _containers_start_post() {
 	return 0
 } # _containers_start_post
 
+_containers_format_memory() {
+	local selector="${1:-}"
+	local file="${2:-}"
+
+	[[ -n "${selector:-}" && -n "${file:-}" ]] || return 1
+	# We can't use 'test -s' on status files, which all report size==0...
+	[[ -f "${file}" && -r "${file}" ]] || return 2
+
+	grep -F "${selector}" "${file}" |
+		awk '( "kB" == $3 ) { $2 /= 1024 ; printf "%.2fMB\n", $2 }'
+} # _containers_format_memory
+
 _containers_status() {
-	local output='einfo' entry=''
+	local output='einfo' entry='' file=''
 	local -i status=0
 
 	default_status || status=${?}
@@ -455,16 +488,43 @@ _containers_status() {
 	else
 		status_host_pid="$( cat "${pidfile}" 2>/dev/null )" ||
 			eerror "Unable to read host PID '${pidfile}': ${?}"
-		status_container_pid="$( cat "${container_svc_pid:-}" 2>/dev/null )" ||
-			eerror "Unable to read container PID '${status_container_pid:-}': ${?}"
+		status_container_pid="$( # <- Syntax
+			cat "${container_svc_pid:-}" 2>/dev/null |
+				awk '{ print $1 }'
+		)" ||
+			eerror "Unable to read container PID" \
+				"'${status_container_pid:-}': ${?}"
 		if
 			[ "${status_host_pid:-1}" = '1' ] ||
 			[ "${status_container_pid:-1}" = '1' ]
 		then
 			output='eerror'
 		fi
-		$output "${RC_SVCNAME}: podman PID '${status_host_pid:-unknown}'," \
-			"host PID '$( awk '{ print $1 }' <<<"${status_container_pid:-unknown}" )'"
+		$output "${RC_SVCNAME}:" \
+			"podman PID '${status_host_pid:-"unknown"}'," \
+			"host PID '${status_container_pid:-"unknown"}'"
+		if (( status_container_pid > 300 )); then
+			if ! [[ -d "/proc/${status_container_pid}" ]]; then
+				eerror "Cannot locate PID directory" \
+					"'/proc/${status_container_pid}'"
+			elif ! [[ -r "/proc/${status_container_pid}/status" ]]; then
+				eerror "Cannot read PID status from" \
+					"'/proc/${status_container_pid}/status'"
+			else
+				file="/proc/${status_container_pid}/status"
+				$output "${RC_SVCNAME//?/ }  Peak memory usage $( # <- Syntax
+					_containers_format_memory 'VmPeak' \
+						"${file}"
+				), Peak resident-set size $( # <- Syntax
+					_containers_format_memory 'VmHWM' \
+						"${file}"
+				), Swap usage $( # <- Syntax
+					_containers_format_memory 'VmSwap' \
+						"${file}"
+				)"
+				unset file
+			fi
+		fi
 		unset status_container_pid status_host_pid
 	fi
 
@@ -501,7 +561,7 @@ _containers_status() {
 				output='eerror'
 			fi
 			$output ''
-			$output "Image:  ${image:--}, ID: ${id:--}: (${state:-Unknown})${created:+ created ${created}}${running:+ running for ${running}}"
+			$output "Image:  ${image:--}, ID: ${id:--}: (${state:-Unknown})${created:+ created ${created}}${running:+ running for ${running,,}}"
 			if [ -n "$( service_get_value 'startup_factor' )" ] && [ -n "$( service_get_value 'startup_ticks' )" ]; then
 				: $(( factor = $( service_get_value 'startup_factor' ) ))
 				: $(( ticks = $( service_get_value 'startup_ticks' ) ))
@@ -603,7 +663,7 @@ _containers_reload() {
 	if [ $(( pid )) -gt 300 ]; then
 		kill -HUP "${pid}"
 	else
-		: $(( pid = $(
+		: $(( pid = $( # <- Syntax
 			docker inspect \
 					--format '{{.State.Pid}}' \
 				"${container_name}" 2>/dev/null || echo '0'
@@ -626,20 +686,20 @@ _containers_reload() {
 
 	pid=0
 
-	while [ $(( oldpid )) -eq "$(
+	while [ $(( oldpid )) -eq "$( # <- Syntax
 		awk '{ print $1 }' < "${pid_file}" || echo '0'
 	)" ] && [ $(( count )) -lt $(( wait )) ]; do
 		sleep ${sleep}
 		: $(( count = count + 1 ))
 	done 2>/dev/null
 
-	if [ $(( oldpid )) -eq "$(
+	if [ $(( oldpid )) -eq "$( # <- Syntax
 		awk '{ print $1 }' < "${pid_file}" || echo '0'
 	)" ]; then
 		eerror "Timed-out waiting for reloaded '${RC_SVCNAME}' PID in file '${pid_file}'"
 	else
 		veinfo "Service '${RC_SVCNAME}' changed from host PID" \
-			"'${oldpid}' to container PID $(
+			"'${oldpid}' to container PID $( # <- Syntax
 				awk '{ print $1 }' < "${pid_file}" || echo '0'
 			)"
 		have_pid=1
@@ -667,7 +727,7 @@ _containers_reload() {
 					"'${pid}' to '${pid_file}' ..."
 				echo "${pid}" > "${pid_file}"
 			else
-				: $(( oldpid = $(
+				: $(( oldpid = $( # <- Syntax
 					awk '{ print $1 }' < "${pid_file}" ||
 					echo '0'
 				) + 0 ))
@@ -692,7 +752,7 @@ _containers_stop_post() {
 
 	set -u
 
-	id="$(
+	id="$( # <- Syntax
 		docker ps \
 				--filter "name=${container_name}" \
 				--format '{{.ID}}' \
@@ -706,7 +766,7 @@ _containers_stop_post() {
 	fi
 
 	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
-		id="$(
+		id="$( # <- Syntax
 			docker ps \
 					--all \
 					--filter "name=${container_name}" \
@@ -763,4 +823,4 @@ stop_post() {
 
 _containers_set_args
 
-# vi: set filetype=gentoo-init-d colorcolumn=80:
+# vi: set colorcolumn=80 filetype=gentoo-init-d foldmarker=()\ {,}\ #\  foldmethod=marker:
