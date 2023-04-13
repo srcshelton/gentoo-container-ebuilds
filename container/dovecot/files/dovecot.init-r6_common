@@ -21,7 +21,7 @@ DOVECOT_BASEDIR="$(
 DOVECOT_BASEDIR=${DOVECOT_BASEDIR:-/var/run/dovecot}
 DOVECOT_PIDFILE=${DOVECOT_BASEDIR}/master.pid
 
-podman_memory_size='tiny'
+podman_memory_size='micro'
 
 PN="${RC_SVCNAME:=dovecot}" # PN='dovecot'
 PV='@PVR@'
