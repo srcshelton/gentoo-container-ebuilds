@@ -17,7 +17,7 @@ set_phpvars() {
 
 set_phpvars || exit 1
 
-podman_memory_size='medium'
+podman_memory_size='small'
 
 WEB_SERVER='lighttpd'
 CONTENT_IMAGE='service.www-servers.web-content:latest'
