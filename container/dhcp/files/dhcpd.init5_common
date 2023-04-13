@@ -26,7 +26,7 @@ case " ${DHCPD_OPTS} " in
 		;;
 esac
 
-podman_memory_size='tiny'
+podman_memory_size='pico'
 
 PN='dhcp' # PN="${RC_SVCNAME:=dhcp}"
 PNV="$( echo "${RC_SVCNAME}" | sed 's/dhcpd/dhcp/' )"

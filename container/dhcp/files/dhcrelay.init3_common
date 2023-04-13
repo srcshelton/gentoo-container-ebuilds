@@ -2,7 +2,7 @@
 # Copyright 1999-2012 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
-podman_memory_size='tiny'
+podman_memory_size='nano'
 
 PN='dhcp' # PN="${RC_SVCNAME:=dhcrelay}"
 PNV="${RC_SVCNAME}"
