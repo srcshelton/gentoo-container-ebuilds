@@ -6,7 +6,7 @@
 : ${NAMED_PIDFILE:=${PIDFILE:-$( grep pid-file "${NAMED_CONF}" | cut -d'"' -f 2 )}}
 : ${NAMED_NICELEVEL:=0}
 
-podman_memory_size='medium'
+podman_memory_size='small'
 
 PN='bind' # PN="${RC_SVCNAME:=named}"
 PV='@PVR@'
@@ -67,14 +67,15 @@ start_stop_daemon_args="$( echo "--wait 1000" \
 
 description="Berkeley Internet Name Domain - Name Server"
 extra_commands="checkconfig checkzones regenerateconfig"
-extra_started_commands="sync reload freeze unfreeze"
+extra_started_commands="flush freeze reload sync unfreeze"
 extra_stopped_commands="inspect"
 description_checkconfig="Validate the service's configuration"
 description_checkzones="Validate the service's zone configurations"
-description_regenerateconfig="Regenerate the service's PTR mappings"
-description_sync="Sync and clear journal files"
-description_reload="Reload the service's configuration"
+description_flush="Clear record cache"
 description_freeze="Commit journaled changes to zone-files and prevent further updates"
+description_regenerateconfig="Regenerate the service's PTR mappings"
+description_reload="Reload the service's configuration"
+description_sync="Sync and clear journal files"
 description_unfreeze="Unlock zone-files and allow dynamic updates"
 description_inspect="Launch container interactively"
 
@@ -167,6 +168,17 @@ regenerateconfig() {
 			"localhost/${dockerimage}" /usr/libexec/entrypoint.d/named
 	fi
 } # regenerateconfig
+
+flush() {
+	if ! service_started "${SVCNAME}" ; then
+		eerror "${SVCNAME} isn't running"
+		return 1
+	fi
+
+	ebegin "Flushing records"
+	docker exec "${container_name}" rndc flush
+	eend ${?}
+} # flush
 
 freeze() {
 	#ebegin "Freezing zones"
@@ -269,14 +281,12 @@ start_pre() {
 }
 
 start_post() {
-	container_svc_wait=20
+	container_svc_wait=60
 
 	_containers_start_post
 }
 
 sync() {
-	local -i rc=0
-
 	if ! service_started "${SVCNAME}" ; then
 		eerror "${SVCNAME} isn't running"
 		return 1
@@ -288,12 +298,10 @@ sync() {
 
 	docker exec "${container_name}" rndc sync -clear
 
-	eend ${rc}
+	eend ${?}
 }
 
 reload() {
-	local -i rc=0
-
 	if ! service_started "${SVCNAME}" ; then
 		eerror "${SVCNAME} isn't running"
 		return 1
@@ -305,7 +313,7 @@ reload() {
 
 	docker exec "${container_name}" rndc reload
 
-	eend ${rc}
+	eend ${?}
 }
 
 # vi: set filetype=gentoo-init-d colorcolumn=80:
