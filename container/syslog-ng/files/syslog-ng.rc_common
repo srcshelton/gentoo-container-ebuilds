@@ -13,7 +13,7 @@
 : ${SYSLOG_NG_GROUP:=root}
 : ${SYSLOG_NG_USER:=root}
 
-podman_memory_size='small'
+podman_memory_size='nano'
 
 PN="${RC_SVCNAME:=syslog-ng}" # PN='syslog-ng'
 PV='@PVR@'

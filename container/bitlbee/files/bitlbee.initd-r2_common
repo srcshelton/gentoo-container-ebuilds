@@ -2,7 +2,7 @@
 # Copyright 1999-2019 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
-podman_memory_size='tiny'
+podman_memory_size='nano'
 
 PN="${RC_SVCNAME:=bitlbee}" # PN='bitlbee'
 PV='@PVR@'

@@ -23,7 +23,7 @@ CATEGORY='mail-filter'
 : ${OPENDKIM_PIDFILE:=/var/run/${PN}/${RC_SVCNAME}.pid}
 : ${OPENDKIM_ARGS:=-P ${OPENDKIM_PIDFILE} -x ${CONFFILE} -p ${OPENDKIM_SOCKET}}
 
-podman_memory_size='tiny'
+podman_memory_size='nano'
 
 container_svc_pid="${OPENDKIM_PIDFILE}"
 command_opts="${OPENDKIM_ARGS} -f -v"

@@ -4,7 +4,7 @@
 
 : ${IRQBALANCE_PIDFILE:=/var/run/${RC_SVCNAME}/${RC_SVCNAME}.pid}
 
-podman_memory_size='tiny'
+podman_memory_size='pico'
 
 PN="${RC_SVCNAME:=irqbalance}" # PN='irqbalance'
 PV='@PVR@'

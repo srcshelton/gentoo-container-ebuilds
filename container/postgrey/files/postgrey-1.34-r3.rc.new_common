@@ -13,7 +13,7 @@ if [ -n "${POSTGREY_TYPE:-}" ]; then
 fi
 : ${POSTGREY_PID:=/var/run/postgrey/postgrey.pid}
 
-podman_memory_size='tiny'
+podman_memory_size='micro'
 
 PN="${RC_SVCNAME:=postgrey}" # PN='postgrey'
 PV='@PVR@'

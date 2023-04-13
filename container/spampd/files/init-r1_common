@@ -5,7 +5,7 @@
 : ${SPAMPD_PIDDIR:=/var/run/${RC_SVCNAME}}
 : ${SPAMPD_PIDFILE:=${SPAMPD_PIDDIR}/spampd.pid}
 
-podman_memory_size='small'
+podman_memory_size='tiny'
 
 PN="${RC_SVCNAME:=spampd}" # PN='spampd'
 PV='@PVR@'
@@ -131,10 +131,10 @@ update() {
 
 		--network host
 
-		--interactive
+		#--interactive
 		--name "openrc-${PPN}-${PPV}"
 		--rm
-		--tty
+		#--tty
 	)
 	dockerimage="service.${CATEGORY}.${PPN}:${PPV}"
 

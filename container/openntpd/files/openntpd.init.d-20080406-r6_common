@@ -2,7 +2,7 @@
 # Copyright 1999-2013 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
-podman_memory_size='tiny'
+podman_memory_size='pico'
 
 # N.B. ${RC_SVCNAME} == 'ntpd', so we don't want to use this
 PN='openntpd'
