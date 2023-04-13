@@ -19,7 +19,7 @@ if (( $? == 0 || $? == 3 )); then
 
 	# Do you run spamd or amavisd? Both daemons need to be reloaded
 	# in order to pick up the newly-updated rules.
-	if command -v rc-service 2>/dev/null; then
+	if command -v rc-service >/dev/null; then
 		# OpenRC is installed. These "status" checks should succeed
 		# only when the daemon is running under OpenRC. We redirect
 		# stderr to hide the lecture that OpenRC gives you if you

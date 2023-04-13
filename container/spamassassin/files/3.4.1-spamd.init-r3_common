@@ -11,7 +11,7 @@ else
 fi
 : ${SPAMD_PIDFILE:=${SPAMD_PIDDIR}/spamd.pid}
 
-podman_memory_size='small'
+podman_memory_size='tiny'
 
 PN='spamassassin' # PN="${RC_SVCNAME:=spamd}"
 PV='@PVR@'
@@ -144,7 +144,7 @@ update() {
 		#--interactive
 		--name "openrc-${PPN}-${PPV}"
 		--rm
-		--tty
+		#--tty
 	)
 	dockerimage="service.${CATEGORY}.${PPN}:${PPV}"
 
