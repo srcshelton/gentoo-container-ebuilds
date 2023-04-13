@@ -9,7 +9,7 @@
 : ${REDIS_GROUP:=redis}
 : ${REDIS_TIMEOUT:=30}
 
-podman_memory_size='large'
+podman_memory_size='tiny'
 
 PN="${RC_SVCNAME:=redis}" # PN='redis'
 PV='@PVR@'

@@ -8,7 +8,7 @@
 : ${REDIS_SENTINEL_GROUP:=redis}
 : ${REDIS_SENTINEL_TIMEOUT:=30}
 
-podman_memory_size='tiny'
+podman_memory_size='nano'
 
 # N.B. ${RC_SVCNAME} == 'redis-sentinel', so we don't want to use this here
 PN='redis'
