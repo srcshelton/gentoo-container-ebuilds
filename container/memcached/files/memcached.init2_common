@@ -25,7 +25,7 @@ else
 	CONFSRC="${CONFBASE}"
 fi
 
-podman_memory_size='medium'
+podman_memory_size='tiny'
 
 PN="${RC_SVCNAME:=memcached}" # PN='memcached'
 PV='@PVR@'
