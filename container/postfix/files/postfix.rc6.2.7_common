@@ -16,7 +16,7 @@ else
 	CONF_MESSAGE="(${CONF_DIR})"
 fi
 
-podman_memory_size='small'
+podman_memory_size='tiny'
 
 PN='postfix' # PN="${RC_SVCNAME:=postfix}"
 PV='@PVR@'
