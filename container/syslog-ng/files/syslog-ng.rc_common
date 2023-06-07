@@ -78,7 +78,9 @@ required_files="${SYSLOG_NG_CONFIGFILE}"
 
 
 depend() {
-	need hostname containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
+	need hostname
 	use clock
 	after bootmisc
 	provide logger
