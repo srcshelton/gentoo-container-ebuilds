@@ -70,10 +70,11 @@ description="High-performance, distributed memory object caching system"
 
 
 depend() {
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	# per bug #269022, accurate time is important for memcached!
 	# We include the full list of ways it might be set on boot.
 	after ntp-client ntpd rdate openrdate adjtimex hwclock
-	need containers
 }
 
 checkconfig() {
