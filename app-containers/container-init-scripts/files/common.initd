@@ -75,9 +75,9 @@ case "${podman_memory_size:-}" in
 esac
 : "${PODMAN_SWAP_LIMIT:="${PODMAN_MEMORY_LIMIT}"}"
 
-command="docker"
+command='docker'
 if type -pf podman >/dev/null; then
-	command="podman"
+	command='podman'
 	docker() {
 		test "${1:-}" = 'rm' && trap '' INT ;
 		podman ${@+"${@}"} ;
@@ -85,13 +85,19 @@ if type -pf podman >/dev/null; then
 	} # docker
 	export -f docker
 fi
+docker --version >/dev/null || exit 127
 
-if [ -r /proc/filesystems ] && ! grep -q -- 'overlay' /proc/filesystems; then
-	# We should really check that the 'overlay' driver is actually in use
-	# here... but this is a sensible and reasonably harmless default
-	ebegin "Attempting to load 'overlay' kernel module"
-	modprobe overlay >/dev/null 2>&1
-	eend ${?} "Module load failed"
+if [ -r /etc/containers/storage.conf ] &&
+		sed 's/#.*//' /etc/containers/storage.conf |
+			grep -q "driver\s*=\s*['\"]overlay['\"]"
+then
+	if [ -r /proc/filesystems ] && ! grep -q -- 'overlay' /proc/filesystems; then
+		# We should really check that the 'overlay' driver is actually in use
+		# here... but this is a sensible and reasonably harmless default
+		ebegin "Attempting to load 'overlay' kernel module"
+		modprobe overlay >/dev/null 2>&1
+		eend ${?} "Module load failed"
+	fi
 fi
 
 #RC_SVCNAME=''            # Set by OpenRC
@@ -181,8 +187,8 @@ container_svc_pid="${container_svc_pid-${container_dir_run-/var/run/${PN}}/${RC_
 command_background="true"
 start_stop_daemon_wait=1000
 start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" \
-	"--stdout /var/log/${PN}/${command}-${PNV:-"${RC_SVCNAME}"}.log" \
-	"--stderr /var/log/${PN}/${command}-${PNV:-"${RC_SVCNAME}"}.log" )"
+	"--stdout /var/log/${PN}/${command%% *}-${PNV:-"${RC_SVCNAME}"}.log" \
+	"--stderr /var/log/${PN}/${command%% *}-${PNV:-"${RC_SVCNAME}"}.log" )"
 pidfile="/var/run/containers/${RC_SVCNAME}.pid"
 
 container_stop_timeout=31
@@ -196,6 +202,12 @@ name="containerised ${RC_SVCNAME}"
 #description_unhealthy=''
 #description_cgroup_cleanup='Kill all processes in the cgroup'
 }
+
+_containers_depend() {
+	need containers
+	use podman docker
+} # containers_depend
+export -f _containers_depend
 
 _containers_set_args() {
 	# Allow substitutions on $command_opts
@@ -226,12 +238,13 @@ _containers_set_args() {
 		--systemd false
 	)
 	#shellcheck disable=SC2034,SC2116,SC2154
-	command_args="run $( echo "${command_docker_args[*]:-}" \
-		"${command_docker_net_args[*]:-}" \
-		"${command_docker_pid_args[*]:-}" \
-		"${command_docker_daemon_args[*]:-}" \
-		"localhost/${dockerimage}" \
-		"${command_opts:+${command_opts/\%PID\%/${container_svc_pid}}}"
+	command_args="run $( # <- Syntax
+		echo "${command_docker_args[*]:-}" \
+			"${command_docker_net_args[*]:-}" \
+			"${command_docker_pid_args[*]:-}" \
+			"${command_docker_daemon_args[*]:-}" \
+			"localhost/${dockerimage}" \
+			"${command_opts:+${command_opts/\%PID\%/${container_svc_pid}}}"
 	)"
 
 	return 0
@@ -426,7 +439,9 @@ _containers_start_post() {
 		done
 
 		if ! [ $(( pid )) -gt 300 ]; then
-			eerror "Unable to determine valid PID for '${PN}' from container '${container_name}' (got '${pid}')"
+			eerror "Unable to determine valid PID for '${PN}'" \
+				"from container '${container_name}'" \
+				"(got '${pid}')"
 		else
 			if [ "$( ps --pid $(( pid )) -ho comm )" = 'init' ]; then
 				: $(( pid = $( ps --ppid $(( pid )) -ho pid ) ))
@@ -540,7 +555,7 @@ _containers_status() {
 		return 1
 	fi
 
-	entry="$( podman ps -a \
+	entry="$( docker ps -a \
 		--filter "name=${container_name}" \
 		--format '{{.ID}}!{{.ImageID}}!{{.Status}}!{{.CreatedAt}}!{{.RunningFor}}!{{.Mounts}}!{{.Labels}}'
 		#--format '{{.ID}}!{{.ImageID}}!{{.Status}}!{{.CreatedAt}}!{{.RunningFor}}!{{.Size}}!{{.Mounts}}!{{.Labels}}'
