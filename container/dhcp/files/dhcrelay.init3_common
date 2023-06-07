@@ -45,7 +45,8 @@ description="ISC Dynamic Host Configuration Protocol (DHCP) client/server"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use logger
 }
 

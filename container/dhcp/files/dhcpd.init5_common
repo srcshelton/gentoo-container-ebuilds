@@ -73,7 +73,7 @@ container_stop_timeout=5
 _containers_set_args
 
 #command_user="dhcp:dhcp"
-retry="TERM/2/KILL/5"
+retry="TERM/5/KILL/2"
 
 description="ISC Dynamic Host Configuration Protocol (DHCP) client/server"
 extra_commands="checkconfig"
@@ -85,7 +85,8 @@ required_files="${DHCPD_CONF}"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use dns logger
 }
 
