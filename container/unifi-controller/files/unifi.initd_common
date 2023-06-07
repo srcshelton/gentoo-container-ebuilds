@@ -90,7 +90,7 @@ _containers_set_args
 
 name="containerised Ubiquiti UniFi Controller"
 #command_user="unifi:unifi"
-retry='TERM/10/KILL/2'
+retry='TERM/30/KILL/2'
 command_progress='true'
 
 description="Ubiquiti UniFi Controller software"
@@ -101,7 +101,8 @@ description_info="Show basic build/configuration data"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 }
 
 inspect() {
