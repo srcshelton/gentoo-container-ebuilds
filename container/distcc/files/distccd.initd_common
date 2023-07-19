@@ -1,0 +1,59 @@
+#!/sbin/openrc-run
+# Copyright 1999-2020 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+podman_memory_size='micro'
+
+PN="${RC_SVCNAME:=distccd}" # PN='distcc'
+PV='@PVR@'
+CATEGORY='sys-devel'
+command_opts="--user distcc --daemon --no-detach ${DISTCCD_OPTS:-}"
+pidfile="/var/run/${RC_SVCNAME}.pid"
+
+#container_dir_owner='distcc'
+container_use_git="${DISTCC_USE_GIT:-}"
+
+container_svc_wait=10
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	#--cap-drop ALL
+	--cap-add SETUID
+	--cap-add SETGID
+
+	--env DISTCC_VERBOSE="${DISTCC_VERBOSE:-0}"
+	--env DISTCC_FALLBACK="${DISTCC_FALLBACK:-1}"
+	--env DISTCC_SAVE_TEMPS="${DISTCC_SAVE_TEMPS:-0}"
+	--env DISTCC_TCP_CORK="${DISTCC_TCP_CORK:-}"
+	--env DISTCC_SSH="${DISTCC_SSH:-}"
+	--env UNCACHED_ERR_FD="${UNCACHED_ERR_FD:-}"
+	--env DISTCC_ENABLE_DISCREPANCY_EMAIL="${DISTCC_ENABLE_DISCREPANCY_EMAIL:-}"
+	--env DCC_EMAILLOG_WHOM_TO_BLAME="${DCC_EMAILLOG_WHOM_TO_BLAME:-}"
+
+	--workdir "/var/lib/${PN}"
+)
+dockernetwork+=(
+	--network host
+)
+#dockerports+=(
+	#--publish 3632:3632/tcp
+#}
+
+dockermounts=( ${dockermount_defaults[@]} )
+
+_containers_set_args
+
+#command_user="distcc:distcc"
+start_stop_daemon_args="${start_stop_daemon_args:-} --chdir /var/lib/${PN}"
+
+description='Distribute compilation of C code across several machines on a network'
+
+depend() {
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
+	need net
+	use avahi-daemon ypbind
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
