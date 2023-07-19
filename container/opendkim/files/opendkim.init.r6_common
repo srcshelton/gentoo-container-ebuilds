@@ -65,7 +65,8 @@ description_configure="Generate initial keys and selectors"
 required_files="${CONFFILE}"
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use dns logger
 	before mta
 }
