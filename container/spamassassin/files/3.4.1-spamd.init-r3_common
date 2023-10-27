@@ -73,20 +73,20 @@ if [ "${SPAMD_RUN_AS_ROOT:-}" != 'true' ]; then
 	# Passing --username=root to spamd kills it, so if SPAMD_RUN_AS_ROOT
 	# is true, then we want to pass no user/group command args at all.
 	# Any value other than "true" gets the default user/group of "spamd".
-	command_opts="${command_opts} --username=spamd --groupname=spamd"
+	command_opts="${command_opts:-} --username=spamd --groupname=spamd"
 fi
 
 _containers_set_args
 
 #command_args_background="--daemonize"
 #command_user="mail:mail"
-start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait-1000}" \
-	"--stdout /var/log/${RC_SVCNAME}/${command}-${PNV:-${RC_SVCNAME}}.log" \
-	"--stderr /var/log/${RC_SVCNAME}/${command}-${PNV:-${RC_SVCNAME}}.log" \
+start_stop_daemon_args="${start_stop_daemon_args:-} $( echo "--wait ${start_stop_daemon_wait-1000}" \
+	"--stdout /var/log/${RC_SVCNAME}/${command%% *}-${PNV:-"${RC_SVCNAME}"}.log" \
+	"--stderr /var/log/${RC_SVCNAME}/${command%% *}-${PNV:-"${RC_SVCNAME}"}.log" \
 	"--nicelevel ${SPAMD_NICELEVEL}" )"
 # Retry after SPAMD_TIMEOUT seconds because spamd can take a
 # while to kill off all of its children. This was bug 322025.
-retry="${SPAMD_TIMEOUT}"
+retry="TERM/${SPAMD_TIMEOUT}/KILL/2"
 command_progress='true'
 
 #required_dirs="${SPAMD_PIDDIR}"
@@ -102,7 +102,8 @@ description_clean="run DCC maintenance"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use logger mysql postgresql
 	before mta
 }
