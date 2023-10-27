@@ -9,7 +9,7 @@
 : ${REDIS_GROUP:=redis}
 : ${REDIS_TIMEOUT:=30}
 
-podman_memory_size='large'
+podman_memory_size='tiny'
 
 PN="${RC_SVCNAME:=redis}" # PN='redis'
 PV='@PVR@'
@@ -30,10 +30,13 @@ container_svc_wait=10
 
 dockeropts+=(
 	--workdir "${REDIS_DIR}"
-
-	--network host
-	#--publish 6379:6379/tcp
 )
+dockernetwork+=(
+	--network host
+)
+#dockerports+=(
+	#--publish 6379:6379/tcp
+#)
 
 dockermounts=( ${dockermount_defaults[@]} )
 
@@ -43,14 +46,16 @@ _containers_set_args
 
 #command_user="${REDIS_USER}:${REDIS_GROUP}"
 start_stop_daemon_args="${start_stop_daemon_args:-} --chdir \"${REDIS_DIR}\""
-retry="${REDIS_TIMEOUT}"
+retry="TERM/${REDIS_TIMEOUT}/KILL/2"
+command_progress='true'
 
 description="A persistent caching system, key-value and data structures database"
 
 
 depend() {
-	need containers
-	use logger
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
+	use localmount logger
 	after keepalived
 }
 

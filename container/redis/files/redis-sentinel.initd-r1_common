@@ -59,7 +59,8 @@ description="A persistent caching system, key-value and data structures database
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use logger
 	after keepalived redis
 }
