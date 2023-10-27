@@ -1,27 +1,26 @@
-# Copyright 1999-2022 Gentoo Authors
+# Copyright 1999-2023 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
 
-#MY_P="${P/p/P}"
-
 DESCRIPTION="An HTTP/HTTPS reverse-proxy and load-balancer"
-HOMEPAGE="https://www.apsis.ch/pound.html"
-#SRC_URI="https://www.apsis.ch/pound/${MY_P}.tgz"
+HOMEPAGE="https://github.com/graygnuorg/pound"
+#SRC_URI="https://github.com/graygnuorg/${PN}/releases/download/v${PV}/${P}.tar.gz"
 
-LICENSE="BSD GPL-3"
+LICENSE="GPL-3"
 SLOT="0"
 KEYWORDS="amd64 ~hppa ~ppc x86"
 
 RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
-	!www-servers/pound"
+	!www-servers/pound
+"
 
 S="${WORKDIR}"
 
 src_prepare() {
-	for f in pound-3.0.init-1.9_common; do
+	for f in pound.init-1.9_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -31,11 +30,11 @@ src_prepare() {
 }
 
 src_install() {
-	newinitd "${T}"/pound-3.0.init-1.9_common pound
+	newinitd "${T}"/pound.init-1.9_common pound
 	newconfd "${FILESDIR}"/pound.confd pound
 
 	insinto /etc/pound
-	newins "${FILESDIR}"/pound-3.0.cfg.yaml pound.yaml
+	newins "${FILESDIR}"/pound-2.2.cfg pound.cfg
 }
 
 pkg_postinst() {
