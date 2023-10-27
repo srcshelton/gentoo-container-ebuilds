@@ -22,6 +22,11 @@ JVM_OPTS=(
 	${JVM_MAX_CPUS:+-XX:ActiveProcessorCount=${JVM_MAX_CPUS}}
 	${JVM_MAX_HEAP_SIZE:+-Xmx${JVM_MAX_HEAP_SIZE}}
 	${JVM_INIT_HEAP_SIZE:+-Xms${JVM_INIT_HEAP_SIZE}}
+	# Recommended to 'avoid memory commit hiccups'??!?
+	-XX:+AlwaysPreTouch
+	# Use Epsilon GC to remove garbage-collection (and crash on OOM)
+	#-XX:+UnlockExperimentalVMOptions -XX:+UseEpsilonGC
+	-XX:+PrintFlagsFinal
 )
 # Application options...
 UNIFI_OPTS=(
@@ -57,6 +62,8 @@ dockeropts+=(
 	${CONTAINER_MAX_CPU_SHARES:+--cpu-shares ${CONTAINER_MAX_CPU_SHARES}}
 
 	--env 'LOG4J_FORMAT_MSG_NO_LOOKUPS=true'
+
+	--ulimit nproc=524288:524288
 )
 dockernetwork+=(
 	--network host
