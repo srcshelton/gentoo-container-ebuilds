@@ -23,7 +23,7 @@ getconfval() {
 : ${OPENDMARC_SOCKET:=local:/var/run/${PN}/${RC_SVCNAME}.sock}
 : ${OPENDMARC_PIDFILE:=/var/run/${PN}/${RC_SVCNAME}.pid}
 
-podman_memory_size='nano'
+podman_memory_size='micro'
 
 PN="${RC_SVCNAME:=opendmarc}" # PN='opendmarc'
 PV='@PVR@'
@@ -78,7 +78,8 @@ required_files="${CONFFILE}"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use dns logger net
 	before mta
 }
