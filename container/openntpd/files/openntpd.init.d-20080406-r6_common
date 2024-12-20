@@ -33,7 +33,11 @@ dockernetwork+=(
 	#--publish 123:123/udp
 #)
 
-dockermounts=( ${dockermount_defaults[@]} )
+dockermounts=(
+	${dockermount_defaults[@]}
+
+	${dockermount_ssl}
+)
 
 _containers_set_args
 
@@ -44,7 +48,8 @@ description="Lightweight NTP server ported from OpenBSD"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	after ntp-client
 	use dns logger
 }
