@@ -40,19 +40,21 @@ dockernetwork+=(
 
 dockermounts=( ${dockermount_defaults[@]} )
 
-dockervolumes=( ${dockervolumes_hugetlb} )
+dockervolumes+=( ${dockervolumes_hugetlb} )
 
 _containers_set_args
 
 #command_user="${REDIS_USER}:${REDIS_GROUP}"
 start_stop_daemon_args="${start_stop_daemon_args:-} --chdir \"${REDIS_DIR}\""
-retry="${REDIS_TIMEOUT}"
+retry="TERM/${REDIS_TIMEOUT}/KILL/2"
+command_progress='true'
 
 description="A persistent caching system, key-value and data structures database"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use localmount logger
 	after keepalived
 }
