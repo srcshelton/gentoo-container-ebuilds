@@ -59,7 +59,7 @@ dockermounts=(
 	${dockermount_run}
 )
 
-dockervolumes=( ${dockervolumes_hugetlb} )
+dockervolumes+=( ${dockervolumes_hugetlb} )
 
 _containers_set_args
 
