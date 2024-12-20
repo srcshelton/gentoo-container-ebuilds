@@ -13,7 +13,7 @@ getconfval() {
 	# setup to enter the container and the configuration values only
 	# obtainable from the service binary itself:
 	#
-	#"$( type -pf lighttpd )" -pf "${LIGHTTPD_CONF}" |
+	#"$(which lighttpd)" -pf "${LIGHTTPD_CONF}" |
 	#	sed 's/#.*$//' |
 	#	grep -F "server.${val}" |
 	#	cut -d '=' -f 2- |
@@ -284,37 +284,15 @@ graceful() {
 
 	checkconfig || return 1
 
-	ebegin "Gracefully stopping lighttpd"
+	ebegin "Gracefully restarting lighttpd"
 
 	if [ -e "${LIGHTTPD_PID}" ]; then
 		: $(( pid = $( cat "${LIGHTTPD_PID}" ) ))
 	fi
 	if [ $(( pid )) -gt 1 ]; then
-		kill -INT ${pid}
+		kill -USR1 ${pid}
 	fi
-	if eend ${?} ; then
-		if sleep 0.1 >/dev/null 2>&1; then
-			sleep='0.1'
-			: $(( wait = wait * 10 ))
-		fi
-		while [ -e "${LIGHTTPD_PID}" ]; do
-			sleep ${sleep}
-		done
-
-		mark_service_stopped
-
-		id="$( docker ps -a \
-			--filter "name=${container_name}" \
-			--format '{{.ID}}' 2>/dev/null
-		)"
-		if [ -n "${id}" ]; then
-			veinfo "Attempting to remove old '${container_name}'" \
-				"container '${id}' ..."
-			docker rm --volumes "${id}" >/dev/null 2>&1
-		fi
-
-		start
-	fi
+	eend ${?} "Failed to restart lighttpd: ${?}"
 }
 
 stop_post() {

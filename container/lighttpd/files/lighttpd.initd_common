@@ -107,7 +107,7 @@ if [ -d /var/www/localhost/htdocs ]; then
 fi
 unset dir webapp
 
-dockervolumes=(
+dockervolumes+=(
 	--volumes-from "${content_name}"
 )
 

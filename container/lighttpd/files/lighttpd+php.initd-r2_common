@@ -13,7 +13,7 @@ getconfval() {
 	# setup to enter the container and the configuration values only
 	# obtainable from the service binary itself:
 	#
-	#"$( type -pf lighttpd )" -pf "${LIGHTTPD_CONF}" |
+	#"$(which lighttpd)" -pf "${LIGHTTPD_CONF}" |
 	#	sed 's/#.*$//' |
 	#	grep -F "server.${val}" |
 	#	cut -d '=' -f 2- |
@@ -49,6 +49,7 @@ getconfval() {
 podman_memory_size='micro'
 
 CONTENT_IMAGE='service.www-servers.web-content:latest'
+PHP_VER='@PPV@'
 
 PN="${RC_SVCNAME:=lighttpd}" # PN='lighttpd'
 PV='@PVR@'
@@ -86,6 +87,9 @@ dockernetwork+=(
 dockermounts=(
 	${dockermount_defaults[@]}
 	${dockermount_ssl}
+	--mount type=bind,source=/etc/php/,destination=/etc/php/,ro=true
+	--mount type=bind,source=/var/log/php/,destination=/var/log/php/
+	--mount type=bind,source=/var/run/php/,destination=/var/run/php/,ro=true
 )
 
 if [ -d /var/www/localhost/htdocs ]; then
@@ -137,12 +141,13 @@ dockerports=()
 
 description="lighttpd is a lightweight high-performance web server"
 extra_commands="checkconfig"
-extra_started_commands="reload clean graceful"
+extra_started_commands="reload clean graceful sync"
 extra_stopped_commands="inspect"
 description_checkconfig="validate configuration files"
 description_reload="cycle logfiles"
 description_clean="trigger DCC maintenance"
 description_graceful="gracefully restart"
+description_sync="trigger Roundcube sync processes"
 description_inspect="Launch container interactively"
 
 #command_user="lighttpd:lighttpd"
@@ -152,7 +157,8 @@ required_files="${LIGHTTPD_CONF}"
 depend() {
 	[[ "$( type -t _containers_depend )" == 'function' ]] &&
 		_containers_depend
-	use dns netmount logger
+	use dns netmount ldap logger mysql php-fpm-php${PHP_VER} slapd \
+		spawn-fcgi
 	after famd sshd
 }
 
@@ -239,6 +245,17 @@ start_pre() {
 		docker rm --volumes "${id}" >/dev/null 2>&1
 	fi
 
+	#id="$( docker ps -a \
+	#	--filter "name=${content_name}" \
+	#	--format '{{.ID}}' 2>/dev/null
+	#)"
+	#if [ -n "${id:-}" ]; then
+	#	veinfo "Attempting to remove old" \
+	#		"'${content_name}' container" \
+	#		"'${id}' ..."
+	#	docker rm --volumes "${id}" >/dev/null 2>&1
+	#fi
+
 	id="$( docker ps -a \
 		--filter "name=${content_name}" \
 		--format '{{.ID}}' 2>/dev/null
@@ -270,6 +287,18 @@ clean() {
 		eerror "${RC_SVCNAME} isn't running"
 		return 1
 	fi
+
+	#docker run \
+	#		"${dockeropts[@]}" \
+	#		"${dockermounts[@]}" \
+	#		"${dockervolumes[@]}" \
+	#		"${dockerports[@]}" \
+	#		--name "openrc-${PN}-${PV}-dcc-clean" \
+	#		--replace \
+	#		--restart no \
+	#		--rm \
+	#		--entrypoint=/bin/sh \
+	#	"localhost/${dockerimage}" -c /etc/cron.daily/dccd
 	docker exec "${container_name}" /etc/cron.daily/dccd
 }
 
@@ -284,36 +313,30 @@ graceful() {
 
 	checkconfig || return 1
 
-	ebegin "Gracefully stopping lighttpd"
+	ebegin "Gracefully restarting lighttpd"
 
 	if [ -e "${LIGHTTPD_PID}" ]; then
 		: $(( pid = $( cat "${LIGHTTPD_PID}" ) ))
 	fi
 	if [ $(( pid )) -gt 1 ]; then
-		kill -INT ${pid}
+		kill -USR1 ${pid}
 	fi
-	if eend ${?} ; then
-		if sleep 0.1 >/dev/null 2>&1; then
-			sleep='0.1'
-			: $(( wait = wait * 10 ))
-		fi
-		while [ -e "${LIGHTTPD_PID}" ]; do
-			sleep ${sleep}
-		done
+	eend ${?} "Failed to restart lighttpd: ${?}"
+}
 
-		mark_service_stopped
+sync() {
+	if ! service_started "${RC_SVCNAME}" ; then
+		eerror "${RC_SVCNAME} isn't running"
+		return 1
+	fi
 
-		id="$( docker ps -a \
-			--filter "name=${container_name}" \
-			--format '{{.ID}}' 2>/dev/null
-		)"
-		if [ -n "${id}" ]; then
-			veinfo "Attempting to remove old '${container_name}'" \
-				"container '${id}' ..."
-			docker rm --volumes "${id}" >/dev/null 2>&1
-		fi
-
-		start
+	if ! service_started "php-fpm-php${PHP_VER}" ; then
+		eerror "Service 'php-fpm-php${PHP_VER}' must be running" \
+			"in  order to run action '${RC_CMD}' on service" \
+			"'${RC_SVCNAME}'"
+		return 1
+	else
+		rc-service "php-fpm-php${PHP_VER}" sync
 	fi
 }
 

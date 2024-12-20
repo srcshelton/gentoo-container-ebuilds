@@ -1,4 +1,4 @@
-# Copyright 1999-2023 Gentoo Authors
+# Copyright 1999-2024 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=8
@@ -7,12 +7,15 @@ inherit readme.gentoo-r1
 
 DESCRIPTION="Lightweight high-performance web server"
 HOMEPAGE="https://www.lighttpd.net https://github.com/lighttpd"
-#SRC_URI="https://download.lighttpd.net/lighttpd/releases-$(ver_cut 1-2).x/${P}.tar.xz"
+#SRC_URI="
+#	https://download.lighttpd.net/lighttpd/releases-$(ver_cut 1-2).x/${P}.tar.xz
+#	verify-sig? ( https://download.lighttpd.net/lighttpd/releases-$(ver_cut 1-2).x/${P}.tar.xz.asc )
+#"
 
 LICENSE="BSD GPL-2"
 SLOT="0"
-KEYWORDS="~alpha amd64 arm ~arm64 ~hppa ~ia64 ~loong ~mips ppc ppc64 ~riscv ~s390 sparc x86"
-#IUSE="+brotli dbi gnutls kerberos ldap +lua maxminddb mbedtls mmap mysql +nettle nss +pcre php postgres rrdtool sasl selinux sqlite ssl systemd +system-xxhash test unwind webdav xattr +zlib zstd"
+KEYWORDS="~alpha amd64 ~arm ~arm64 ~hppa ~ia64 ~loong ~mips ~ppc ppc64 ~riscv ~s390 sparc x86"
+#IUSE="+brotli dbi gnutls kerberos ldap +lua maxminddb mbedtls mmap +nettle nss +pcre php sasl selinux ssl systemd test unwind webdav xattr +zlib zstd"
 IUSE="php"
 #RESTRICT="!test? ( test )"
 
@@ -33,11 +36,6 @@ S="${WORKDIR}"
 update_config() {
 	local config="${ED}/etc/lighttpd/lighttpd.conf"
 
-	# Enable php/mod_fastcgi settings
-	if use php; then
-		sed -i -e 's|#.*\(include.*fastcgi.*$\)|\1|' ${config} || die
-	fi
-
 	# Automatically listen on IPv6 if built with USE=ipv6 (which we now always do)
 	# bug #234987
 	sed -i -e 's|# server.use-ipv6|server.use-ipv6|' ${config} || die
@@ -45,17 +43,26 @@ update_config() {
 
 pkg_setup() {
 	DOC_CONTENTS="IPv6 migration guide:\n
-		http://redmine.lighttpd.net/projects/lighttpd/wiki/IPv6-Config"
+		https://redmine.lighttpd.net/projects/lighttpd/wiki/IPv6-Config
+	"
 }
 
 src_prepare() {
-	local f='' PHP_TARGETS="${PHP_TARGETS:-$( portageq envvar PHP_TARGETS )}"
+	# See https://github.com/InBetweenNames/gentooLTO/issues/883
+	local initd='' regex='' f=''
 
-	for f in lighttpd.initd-r1_common; do
-		sed \
-			-e "s#@PVR@#${PVR}#" \
-			-e "s#@PPV@#${PHP_TARGETS##* }#" \
-			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
+	if use php; then
+		local PHP_TARGETS="${PHP_TARGETS:-"$( $( type -pf portageq ) envvar PHP_TARGETS )"}"
+		initd="lighttpd+php.initd-r1_common"
+		regex="s#@PVR@#${PVR}# ; s#@PPV@#${PHP_TARGETS##* }#"
+	else
+		initd="lighttpd.initd-r1_common"
+		regex="s#@PVR@#${PVR}#"
+	fi
+	for f in "${initd}"; do
+		sed -e "${regex}" \
+				"${FILESDIR}/${f}" > "${T}/${f/+php}" ||
+			die "sed with regex '${regex}' failed: ${?}"
 	done
 
 	default
