@@ -17,7 +17,6 @@ container_svc_pid="/var/run/zeus/zxtm/internal/pid"
 container_svc_pid_dir="/var/run/zeus/zxtm"
 
 container_svc_wait=90
-retry='TERM/45/KILL/5'
 
 . /etc/init.d/_containers_common || return ${?}
 
@@ -113,10 +112,11 @@ _containers_set_args
 
 name="containerised ZXTM"
 #command_user='nobody:nogroup'
-start_stop_daemon_args="$( echo "--wait 2000" \
-	"--stdout /var/log/zeus/${command}-${RC_SVCNAME}.log" \
-	"--stderr /var/log/zeus/${command}-${RC_SVCNAME}.log" )"
-retry='15'
+start_stop_daemon_args="${start_stop_daemon_args:-} $( echo "--wait 2000" \
+	"--stdout /var/log/zeus/${command%% *}-${RC_SVCNAME}.log" \
+	"--stderr /var/log/zeus/${command%% *}-${RC_SVCNAME}.log" )"
+retry='TERM/45/KILL/2'
+command_progress='true'
 
 description="Pulse Secure Virtual Traffic Manager (former Zeus ZXTM)"
 extra_stopped_commands="inspect"
@@ -124,11 +124,12 @@ description_inspect="Launch container interactively"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 }
 
 _checkpaths() {
-	_containers_check_paths
+	_containers_check_paths || return ${?}
 
 	checkpath --directory \
 			--mode 0755 \
