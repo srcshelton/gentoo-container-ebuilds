@@ -3,21 +3,39 @@
 # Distributed under the terms of the GNU General Public License v2
 
 set_phpvars() {
-	PHPSLOT="${RC_SVCNAME#php-fpm-}"
-	if [ "${PHPSLOT}" = "php-fpm" ] ; then
-		#PHPSLOT="$(eselect php show fpm)"
-		PHPSLOT="php$( echo '@PVR@' | cut -d'.' -f 1-2 )"
+	PHPSLOT="${RC_SVCNAME#php-fpm-}"  # "php-fpm-php8.2"
+	if [ "${PHPSLOT}" = 'php-fpm' ]; then
+		PHPSLOT=''
+		if type -pf portageq >/dev/null 2>&1; then
+			# php8-2
+			PHPSLOT="$( portageq envvar PHP_TARGETS 2>/dev/null )"
+		fi
+		if [ -z "${PHPSLOT:-}" ] &&
+				type -pf emerge >/dev/null 2>&1
+		then
+			# PHP_TARGETS="php8-2"
+			PHPSLOT="$(  # <- Syntax
+				emerge --info 2>/dev/null |
+					grep '^PHP_TARGETS="' |
+					cut -d'"' -f 2
+			)"
+		fi
+		if [ -n "${PHPSLOT:-}" ]; then
+			PHPSLOT="$(  # <- Syntax
+				echo "${PHPSLOT}" |
+					awk '{print $1}' |
+					sed 's/-/./g'
+			)"
+		fi
 		PHP_FPM_PID="/var/run/php/php-fpm.pid"
 	else
 		PHP_FPM_PID="/var/run/php/php-fpm-${PHPSLOT}.pid"
 	fi
-
-	PHP_FPM_CONF="/etc/php/fpm-${PHPSLOT}/php-fpm.conf"
 }
 
 set_phpvars || exit 1
 
-podman_memory_size='small'
+podman_memory_size='medium'
 
 WEB_SERVER='lighttpd'
 CONTENT_IMAGE='service.www-servers.web-content:latest'
@@ -26,7 +44,28 @@ CPV='@CPVR@'
 content_name="openrc-${CPN}-${CPV}.web-content"
 
 PN='php'
-PV='@PVR@'
+if [ -z "${PHPSLOT:-}" ]; then
+	PHPSLOT='php8.2'
+fi
+case "${PHPSLOT:-}" in
+	php8.0)	PV=''
+		;;
+	php8.1)	PV=''
+		;;
+	php8.2)	PV=''
+		;;
+	php8.3)	PV=''
+		;;
+	*)	eerror "Unknown PHPSLOT '${PHPSLOT:-}'"
+		exit 1
+		;;
+esac
+if ! [ -n "${PV:-}" ]; then
+	eerror "Cannot determine PHP version for '${RC_SVCNAME}' (slot" \
+		"${PHP_SLOT:-"unknown"})"
+	exit 1
+fi
+PHP_FPM_CONF="/etc/php/fpm-${PHPSLOT}/php-fpm.conf"
 CATEGORY='dev-lang'
 container_svc_pid="${PHP_FPM_PID}"
 command_opts="$( echo "--fpm-config \"${PHP_FPM_CONF}\" --pid \"%PID%\"" \
@@ -53,6 +92,8 @@ dockeropts+=(
 	--cap-add FOWNER
 	--cap-add SETGID
 	--cap-add SETUID
+
+	--stop-signal SIGQUIT
 )
 dockernetwork+=(
 	--network host
@@ -86,17 +127,20 @@ if [ -d /var/www/localhost/htdocs ]; then
 fi
 unset dir webapp
 
-dockervolumes=(
+dockervolumes+=(
 	${dockervolumes_hugetlb}
 	--volumes-from "${content_name}"
 )
 
+container_stop_timeout=5
+
 _containers_set_args
 
-start_stop_daemon_args="${start_stop_daemon_args}${PHP_FPM_UMASK:+ --umask ${PHP_FPM_UMASK}}"
+start_stop_daemon_args="${start_stop_daemon_args:-}${PHP_FPM_UMASK:+" --umask ${PHP_FPM_UMASK}"}"
 # php-fpm logs that it has received QUIT and TERM signals, but does nothing in
 # response :(
-retry='SIGQUIT/1/SIGTERM/1/SIGKILL/2'
+retry='QUIT/5/KILL/2'
+command_progress='true'
 
 name="containerised PHP FastCGI Process Manager for ${PHPSLOT}"
 description="The PHP language runtime engine"
@@ -110,7 +154,9 @@ description_inspect="Launch container interactively"
 
 
 depend() {
-	need containers mysql
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
+	need mysql
 	use logger
 }
 

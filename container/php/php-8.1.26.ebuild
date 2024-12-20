@@ -1,10 +1,10 @@
-# Copyright 1999-2022 Gentoo Authors
+# Copyright 1999-2024 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 #### The data in the files/ subdirectory of this ebuild are a combination ####
 #### of those from dev-lang/php and app-eselect/eselect-php               ####
 
-EAPI="7"
+EAPI=8
 
 DESCRIPTION="The PHP language runtime engine"
 HOMEPAGE="https://www.php.net/"
@@ -19,7 +19,7 @@ LICENSE="PHP-3.01
 	unicode? ( BSD-2 LGPL-2.1 )"
 
 SLOT="$(ver_cut 1-2)"
-KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~mips ppc ppc64 ~riscv ~s390 sparc ~x86 ~amd64-linux ~x86-linux ~ppc-macos ~x64-macos"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~loong ~mips ~ppc ~ppc64 ~riscv ~s390 sparc x86 ~amd64-linux ~x86-linux ~ppc-macos ~x64-macos"
 
 S="${WORKDIR}"
 
@@ -27,7 +27,7 @@ S="${WORKDIR}"
 #SAPIS="fpm"
 
 # SAPIs and SAPI-specific USE flags (cli SAPI is default on):
-#IUSE="acl apache2 apparmor argon2 bcmath berkdb bzip2 calendar cdb cgi cjk +cli coverage +ctype curl debug embed enchant exif ffi +fileinfo +filter firebird +flatfile fpm ftp gd gdbm gmp +iconv imap inifile intl iodbc ipv6 +jit kerberos ldap ldap-sasl libedit lmdb mhash mssql mysql mysqli nls oci8-instant-client odbc +opcache pcntl pdo +phar phpdbg +posix postgres qdbm readline selinux +session session-mm sharedmem +simplexml snmp soap sockets sodium spell sqlite ssl systemd sysvipc test threads tidy +tokenizer tokyocabinet truetype unicode webp +xml xmlreader xmlwriter xpm xslt zip zlib"
+#IUSE="acl apache2 apparmor argon2 avif bcmath berkdb bzip2 calendar cdb cgi cjk +cli coverage +ctype curl debug embed enchant exif ffi +fileinfo +filter firebird +flatfile fpm ftp gd gdbm gmp +iconv imap inifile intl iodbc ipv6 +jit kerberos ldap ldap-sasl libedit lmdb mhash mssql mysql mysqli nls oci8-instant-client odbc +opcache pcntl pdo +phar phpdbg +posix postgres qdbm readline selinux +session session-mm sharedmem +simplexml snmp soap sockets sodium spell sqlite ssl systemd sysvipc test threads tidy +tokenizer tokyocabinet truetype unicode webp +xml xmlreader xmlwriter xpm xslt zip zlib"
 IUSE="bcmath +fpm gd test unicode zlib"
 
 REQUIRED_USE="
@@ -47,13 +47,12 @@ RDEPEND="${COMMON_DEPEND}
 
 BDEPEND="${COMMON_DEPEND}"
 
-
 src_prepare() {
 	local f
 
 	for f in php-fpm.init-r5_common; do
 		sed \
-			-e "/^\s${PN}${PVR%.*})\sPV=''$/s#''#'${PVR}'#" \
+			-e "s#@PVR@#${PVR}#" \
 			-e "s#@CPVR@#$( best_version -r container/lighttpd | sed 's|^container/lighttpd-||' )#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
 	done
