@@ -2,7 +2,7 @@
 # Copyright 1999-2009 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
-podman_memory_size='pico'
+podman_memory_size='nano'
 
 PN="${RC_SVCNAME:=imapproxy}" # PN='imapproxy'
 PV='@PVR@'
@@ -45,10 +45,13 @@ dockermounts=(
 	${dockermount_run}
 )
 
+container_stop_timeout=2
+
 _containers_set_args
 
 #command_user="root:root"
-retry='SIGKILL/5'
+start_stop_daemon_args="${start_stop_daemon_args:-} --wait 5000"
+retry='TERM/30/KILL/5'
 
 description="Proxy IMAP transactions between an IMAP client and an IMAP server"
 extra_stopped_commands="inspect"
@@ -60,7 +63,8 @@ required_files="/etc/${PN}/${RC_SVCNAME}d.conf"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use logger dovecot
 }
 
