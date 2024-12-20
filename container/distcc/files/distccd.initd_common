@@ -4,7 +4,7 @@
 
 podman_memory_size='micro'
 
-PN="${RC_SVCNAME:=distccd}" # PN='distcc'
+PN='distcc' # PN="${RC_SVCNAME:=distccd}"
 PV='@PVR@'
 CATEGORY='sys-devel'
 command_opts="--user distcc --daemon --no-detach ${DISTCCD_OPTS:-}"
@@ -31,7 +31,7 @@ dockeropts+=(
 	--env DISTCC_ENABLE_DISCREPANCY_EMAIL="${DISTCC_ENABLE_DISCREPANCY_EMAIL:-}"
 	--env DCC_EMAILLOG_WHOM_TO_BLAME="${DCC_EMAILLOG_WHOM_TO_BLAME:-}"
 
-	--workdir "/var/lib/${PN}"
+	#--workdir "/var/lib/${PN}"
 )
 dockernetwork+=(
 	--network host
@@ -45,7 +45,7 @@ dockermounts=( ${dockermount_defaults[@]} )
 _containers_set_args
 
 #command_user="distcc:distcc"
-start_stop_daemon_args="${start_stop_daemon_args:-} --chdir /var/lib/${PN}"
+#start_stop_daemon_args="${start_stop_daemon_args:-} --chdir /var/lib/${PN}"
 
 description='Distribute compilation of C code across several machines on a network'
 

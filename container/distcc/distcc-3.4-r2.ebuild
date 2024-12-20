@@ -28,7 +28,7 @@ S="${WORKDIR}"
 src_prepare() {
 	local f
 
-	for f in named.init-r14_common; do
+	for f in distccd.initd_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
@@ -45,7 +45,7 @@ src_prepare() {
 }
 
 src_install() {
-	newinitd "${FILESDIR}/distccd.initd_common" distccd
+	newinitd "${T}/distccd.initd_common" distccd
 
 	cp "${FILESDIR}/distccd.confd" "${T}/distccd" || die
 	if use zeroconf; then
