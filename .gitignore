@@ -2,5 +2,6 @@
 *.swp
 *~
 
+local/*
 */*/.ignore-new
 metadata/md5-cache/*
