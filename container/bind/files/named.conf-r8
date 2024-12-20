@@ -27,7 +27,7 @@ acl "trusted" {
 };
 
 options {
-	directory "/var/bind";
+	directory "/var/state/bind";
 	pid-file "/var/run/named/named.pid";
 
 	/* https://www.isc.org/solutions/dlv >=bind-9.7.x only */
@@ -122,7 +122,7 @@ controls {
 
 zone "." in {
 	type hint;
-	file "/var/bind/named.cache";
+	file "/var/state/bind/named.cache";
 };
 
 zone "localhost" IN {
@@ -146,14 +146,14 @@ zone "localhost" IN {
 
 //zone "YOUR-DOMAIN.TLD" {
 //	type master;
-//	file "/var/bind/pri/YOUR-DOMAIN.TLD.zone";
+//	file "/var/state/bind/pri/YOUR-DOMAIN.TLD.zone";
 //	allow-query { any; };
 //	allow-transfer { xfer; };
 //};
 
 //zone "YOUR-SLAVE.TLD" {
 //	type slave;
-//	file "/var/bind/sec/YOUR-SLAVE.TLD.zone";
+//	file "/var/state/bind/sec/YOUR-SLAVE.TLD.zone";
 //	masters { <MASTER>; };
 
 	/* Anybody is allowed to query but transfer should be controlled by the master. */
