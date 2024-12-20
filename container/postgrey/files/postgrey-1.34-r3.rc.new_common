@@ -70,7 +70,8 @@ description_reload="Reload configuration"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	before postfix
 	provide postfix_greylist
 }
