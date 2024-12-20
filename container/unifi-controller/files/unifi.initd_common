@@ -15,6 +15,11 @@ jar="${DIR}/lib/ace.jar"
 # Java options...
 JVM_OPTS=(
 	${JAVA_OPTS:-}
+	--add-opens 'java.base/java.io=ALL-UNNAMED'
+	--add-opens 'java.base/java.lang=ALL-UNNAMED'
+	--add-opens 'java.base/java.time=ALL-UNNAMED'
+	--add-opens 'java.base/sun.security.util=ALL-UNNAMED'
+	--add-opens 'java.rmi/sun.rmi.transport=ALL-UNNAMED'
 	-Djava.awt.headless=true
 	-Dfile.encoding=UTF-8
 	#-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts
@@ -22,6 +27,15 @@ JVM_OPTS=(
 	${JVM_MAX_CPUS:+-XX:ActiveProcessorCount=${JVM_MAX_CPUS}}
 	${JVM_MAX_HEAP_SIZE:+-Xmx${JVM_MAX_HEAP_SIZE}}
 	${JVM_INIT_HEAP_SIZE:+-Xms${JVM_INIT_HEAP_SIZE}}
+	# Used by Debian package...
+	-Dapple.awt.UIElement=true
+	-Dunifi.core.enabled=false
+	#-Dunifi.mongodb.service.enabled=${UNIFI_MONGODB_SERVICE_ENABLED}
+	-XX:+ExitOnOutOfMemoryError
+	-XX:+CrashOnOutOfMemoryError
+	-XX:ErrorFile=/var/log/unifi/hs_err_pid%p.log
+	-Xlog:gc:file=/var/log/unifi/gc.log:time:filecount=2,filesize=5M
+	-XX:+UseParallelGC
 	# Recommended to 'avoid memory commit hiccups'??!?
 	-XX:+AlwaysPreTouch
 	# Use Epsilon GC to remove garbage-collection (and crash on OOM)
@@ -62,6 +76,11 @@ dockeropts+=(
 	${CONTAINER_MAX_CPU_SHARES:+--cpu-shares ${CONTAINER_MAX_CPU_SHARES}}
 
 	--env 'LOG4J_FORMAT_MSG_NO_LOOKUPS=true'
+
+	# Set by Debian package...
+	#--env UNIFI_CORE_ENABLED=false
+	#--env UNIFI_MONGODB_SERVICE_ENABLED=false
+	#--env UNIFI_JVM_OPTS="-Xmx1024M -XX:+UseParallelGC"
 
 	--ulimit nproc=524288:524288
 )
