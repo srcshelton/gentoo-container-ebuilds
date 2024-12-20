@@ -1,0 +1,30 @@
+# The user netdata is configured to run as.
+#
+# If you edit the netdata configuration file to set a different user then also
+# make that change here too, to update file ownership...
+#
+NETDATA_OWNER="netdata:netdata"
+
+# The URL from which to download the netdata configuration.
+#
+NETDATA_CONFIG_URL="http://localhost:19999/netdata.conf"
+
+# The timeout in seconds to wait for netdata to save its database to disk and
+# exit.
+#
+NETDATA_WAIT_EXIT_TIMEOUT=60
+
+# If set to 1, use netdatacli when sending commands to the agent.
+#
+# This should not be needed in most cases, but it can sometimes help work
+# around certain issues.
+#
+#NETDATA_USE_NETDATACLI=1
+
+# Specify the path to the pidfile to be used when running in the
+# background.
+#
+NETDATA_PIDFILE="/var/run/netdata/netdata.pid"
+
+# Check changes into a (pre-existing) git repo in /etc/netdata?
+#NETDATA_USE_GIT=0
