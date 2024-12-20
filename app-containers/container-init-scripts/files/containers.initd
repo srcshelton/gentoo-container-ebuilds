@@ -6,176 +6,200 @@ name="container preparation"
 extra_commands="prune"
 description_prune="Prune container system"
 description="Prepare the system for docker/podman container-running"
+_command="docker"
 
 depend() {
 	need localmount net
-	use docker podman lvm
+	use lvm
+	before docker podman
 }  # depend
 
 _get_runner() {
-	if command -v podman >/dev/null 2>&1 ; then
+	if type -pf podman >/dev/null 2>&1 ; then
+		_command='podman'
 		docker() { podman ${@+"${@}"} ; }
 		export -f docker
-	elif command -v docker >/dev/null 2>&1 ; then
+	elif type -pf docker >/dev/null 2>&1 ; then
 		:
 	else
 		eerror "Could not find container runner"
 		return 1
 	fi
+
+	docker --version >/dev/null || return 127
 }  # _get_runner
 
 _migrate_run_root() {
-	local runroot='' fstype='' mptmpdir=''
+	local runroot='' fstype='' mptmpdir='' rootname='runRoot'
 	local -i ismountpoint=0
 
 	# We can't use docker/podman themselves as if the runRoot isn't
 	# accessible they'll hang :(
 	#
-	#if ! runroot="$( readlink -e "$(
+	#if ! runroot="$( readlink -e "$( # <- Syntax
 	#	docker info | grep -F 'runRoot' | awk -F': ' '{ print $2 }'
 	#)" )" ; then
-	if ! runroot="$( readlink -m "$( # <- Syntax highlight failure
-		sed 's/#.*$//' /etc/containers/storage.conf |
-		grep -i "^\s*runroot\s*=\s*['\"]\?.*['\"]\?\s*$" |
-		awk -F'"' '{ print $2 }'
+	if ! runroot="$( readlink -m "$( # <- Syntax
+			sed 's/#.*$//' /etc/containers/storage.conf |
+				grep -i "^\s*runroot\s*=\s*['\"]\?.*['\"]\?\s*$" |
+				awk -F'"' '{ print $2 }'
 	)" )" ; then
 		eerror "Cannot determine absolute location of runRoot" \
 			"'${runroot:-}': ${?}"
 		return 1
 	fi
 
-	# Directory doesn't exist, we need to create it...
-	if ! [ -d "${runroot}" ] ; then
-		if ! mkdir -p "${runroot}"; then
-			eerror "mkdir() on '${runroot}' failed: ${?}"
-			return 1
-		fi
-		chmod 0 "${runroot}"
-		chattr +i "${runroot}"
-		if
-			! mount -t tmpfs 'podman.runRoot' "${runroot}" \
-				-o nodev,noexec,nosuid,size=10M
-		then
-			eend ${?} "mount failed: {?}"
-			return ${?}
-		fi
+	# podman also seems to keep using /var/run/libpod even when configured
+	# otherwise, which causes problems if /var runs out of space :(
+	#
+	for runroot in $( # <- Syntax
+			printf '%s\n%s' "${runroot}" '/var/run/libpod' |
+				uniq
+	); do
+		case "${runroot}" in
+			*podman)
+				rootname='runRoot' ;;
+			*libpod)
+				rootname='libpod.runRoot' ;;
+		esac
 
-	# Directory exists (and isn't a mountpoint) and is empty - easy!
-	elif
-		! mountpoint -q "${runroot}" && \
-			find "${runroot}" -maxdepth 0 -type d -not -empty \
-				-exec false {} + 2>/dev/null
-	then
-		chmod 0 "${runroot}" 2>/dev/null || :
-		chattr +i "${runroot}" 2>/dev/null || :
-		if
-			! mount -t tmpfs 'podman.runRoot' "${runroot}" \
-				-o nodev,noexec,nosuid,size=10M
-		then
-			eend ${?} "mount failed: {?}"
-			return ${?}
-		fi
+		# Directory doesn't exist, we need to create it...
+		#
+		if ! [ -d "${runroot}" ] ; then
+			if ! mkdir -p "${runroot}"; then
+				eerror "mkdir() on '${runroot}' failed: ${?}"
+				return 1
+			fi
+			chmod 0 "${runroot}"
+			chattr +i "${runroot}"
+			if
+				! mount -t tmpfs "${_command%% *}.${rootname}" "${runroot}" \
+					-o nodev,noexec,nosuid,size=10M
+			then
+				eend ${?} "mount failed: {?}"
+				return ${?}
+			fi
 
-	else
-		if ! fstype="$( stat -f -c %T "${runroot}/." )" ; then
-			eerror "stat(${runroot}) failed: ${?}"
+		# Directory exists (and isn't a mountpoint) and is empty - easy!
+		#
+		elif
+			! mountpoint -q "${runroot}" && \
+				find "${runroot}" -maxdepth 0 -type d -not -empty \
+					-exec false {} + 2>/dev/null
+		then
+			chmod 0 "${runroot}" 2>/dev/null || :
+			chattr +i "${runroot}" 2>/dev/null || :
+			if
+				! mount -t tmpfs "${_command%% *}.${rootname}" "${runroot}" \
+					-o nodev,noexec,nosuid,size=10M
+			then
+				eend ${?} "mount failed: {?}"
+				return ${?}
+			fi
+
+		# Directory exists but is already a mountpoint or contains data...
+		#
 		else
-			if [ "${fstype}" != 'tmpfs' ] ; then
-				if mountpoint -q "${runroot}" ; then
-					ebegin "Moving runRoot mountpoint '${runroot}' from" \
-						"filesystem '${fstype}' to 'tmpfs'"
-					ismountpoint=1
-				else
-					ebegin "Moving runRoot '${runroot}' from filesystem" \
-						"'${fstype}' to 'tmpfs'"
-				fi
-
-				if
-					! mptmpdir="$(
-						mktemp \
-								--directory \
-								--quiet \
-								--tmpdir="$( dirname "${runroot}" )" \
-							"${SVCNAME}-tmp.XXXXXXXX"
-					)"
-				then
-					eend ${?} "mktemp() failed: ${?}"
-					return ${?}
-				fi
-
-				if [ $(( ismountpoint )) -eq 0 ]; then
-					if ! rmdir "${mptmpdir}" ; then
-						eerror "rmdir() failed on '${mptmpdir}': ${?}"
-						return 1
+			if ! fstype="$( stat -f -c %T "${runroot}/." )" ; then
+				eerror "stat(${runroot}) failed: ${?}"
+			else
+				if [ "${fstype}" != 'tmpfs' ] ; then
+					if mountpoint -q "${runroot}" ; then
+						ebegin "Moving runRoot mountpoint '${runroot}' from" \
+							"filesystem '${fstype}' to 'tmpfs'"
+						ismountpoint=1
+					else
+						ebegin "Moving runRoot '${runroot}' from filesystem" \
+							"'${fstype}' to 'tmpfs'"
 					fi
-					if ! mv "${runroot}" "${mptmpdir}" ; then
-						eerror "rename() failed from '${runroot}' to" \
-							"'${mptmpdir}': ${?}"
-						return 1
-					fi
-				else
+
 					if
-						! find "${runroot}"/ \
+						! mptmpdir="$( # <- Syntax
+							mktemp \
+									--directory \
+									--quiet \
+									--tmpdir="$( dirname "${runroot}" )" \
+								"${SVCNAME}-tmp.XXXXXXXX"
+						)"
+					then
+						eend ${?} "mktemp() failed: ${?}"
+						return ${?}
+					fi
+
+					if [ $(( ismountpoint )) -eq 0 ]; then
+						if ! rmdir "${mptmpdir}" ; then
+							eerror "rmdir() failed on '${mptmpdir}': ${?}"
+							return 1
+						fi
+						if ! mv "${runroot}" "${mptmpdir}" ; then
+							eerror "rename() failed from '${runroot}' to" \
+								"'${mptmpdir}': ${?}"
+							return 1
+						fi
+					else
+						if
+							! find "${runroot}"/ \
+								-xdev \
+								-maxdepth 1 \
+								-exec cp -a {} "${mptmpdir}/" ';' 2>/dev/null
+						then
+							eend ${?} "file copy failed: ${?}"
+							if ! rm -r "${mptmpdir}" ; then
+								eerror "rmdir() failed on '${mptmpdir}': ${?}"
+							fi
+							return 1
+						fi
+						if ! {
+							umount "${runroot}" ||
+							umount -f "${runroot}"
+						} ; then
+							ewarn "umount of '${runroot}' failed: ${?}"
+							ewarn "Will over-mount with 'tmpfs' filesystem ..."
+						fi
+						if ! rm -r "${runroot}"; then
+							ewarn "Cannot remove runRoot directory" \
+								"'${runroot}': ${?}"
+							ewarn "Will over-mount with 'tmpfs' filesystem ..."
+						fi
+					fi
+
+					if ! mkdir -p "${runroot}"; then
+						eerror "mkdir() on '${runroot}' failed: ${?}"
+						return 1
+					fi
+					chmod 0 "${runroot}"
+					chattr +i "${runroot}"
+
+					if
+						! mount -t tmpfs "${_command%% *}.${rootname}" \
+							"${runroot}" -o nodev,noexec,nosuid,size=10M
+					then
+						eend ${?} "mount failed: {?}"
+						return ${?}
+					fi
+					if
+						! find "${mptmpdir}"/ \
 							-xdev \
 							-maxdepth 1 \
-							-exec cp -a {} "${mptmpdir}/" ';' 2>/dev/null
+							-exec mv {} "${runroot}/" ';' 2>/dev/null
 					then
 						eend ${?} "file copy failed: ${?}"
-						if ! rm -r "${mptmpdir}" ; then
-							eerror "rmdir() failed on '${mptmpdir}': ${?}"
-						fi
+						ewarn "Preserving temporary directory '${mptmpdir}'"
 						return 1
 					fi
-					if ! {
-						umount "${runroot}" ||
-						umount -f "${runroot}"
-					} ; then
-						ewarn "umount of '${runroot}' failed: ${?}"
-						ewarn "Will over-mount with 'tmpfs' filesystem ..."
+					if ! rmdir "${mptmpdir}" ; then
+						eend ${?} "rmdir() failed on '${mptmpdir}': ${?}"
+						if ! rm -r "${mptmpdir}"; then
+							eerror "Cannot remove temporary directory" \
+								"'${mptmpdir}': ${?}"
+						fi
 					fi
-					if ! rm -r "${runroot}"; then
-						ewarn "Cannot remove runRoot directory" \
-							"'${runroot}': ${?}"
-						ewarn "Will over-mount with 'tmpfs' filesystem ..."
-					fi
+					unset mptmpdir
+					eend ${?} "runRoot migration failed: ${?}"
 				fi
-
-				if ! mkdir -p "${runroot}"; then
-					eerror "mkdir() on '${runroot}' failed: ${?}"
-					return 1
-				fi
-				chmod 0 "${runroot}"
-				chattr +i "${runroot}"
-
-				if
-					! mount -t tmpfs 'podman.runRoot' "${runroot}" \
-						-o nodev,noexec,nosuid,size=10M
-				then
-					eend ${?} "mount failed: {?}"
-					return ${?}
-				fi
-				if
-					! find "${mptmpdir}"/ \
-						-xdev \
-						-maxdepth 1 \
-						-exec mv {} "${runroot}/" ';' 2>/dev/null
-				then
-					eend ${?} "file copy failed: ${?}"
-					ewarn "Preserving temporary directory '${mptmpdir}'"
-					return 1
-				fi
-				if ! rmdir "${mptmpdir}" ; then
-					eend ${?} "rmdir() failed on '${mptmpdir}': ${?}"
-					if ! rm -r "${mptmpdir}"; then
-						eerror "Cannot remove temporary directory" \
-							"'${mptmpdir}': ${?}"
-					fi
-				fi
-				unset mptmpdir
-				eend ${?} "runRoot migration failed: ${?}"
 			fi
 		fi
-	fi
+	done
 }  # _migrate_run_root
 
 _clean() {
@@ -194,8 +218,10 @@ _clean() {
 	docker container stop --all --ignore
 	docker container rm --all --ignore --volumes ||
 	docker container rm --all --ignore --volumes
+	docker container rm --all --force ||
+	docker container rm --all --force
 	docker system prune --force
-	if command -v buildah >/dev/null 2>&1 ; then
+	if type -pf buildah >/dev/null 2>&1 ; then
 		buildah rm --all
 		buildah rmi --prune
 	fi
@@ -216,6 +242,14 @@ start_pre() {
 }  # start_pre
 
 start() {
+	if [ -z "${BASH_VERSION:-}" ]; then
+		eerror "Container service init scripts require the use of bash" \
+			"arrays, and so their init scripts are incompatible with POSIX" \
+			"sh (or equivalents, such as busybox ash)"
+		eerror "Not starting container services"
+		return 1
+	fi
+
 	if [ -e /.block_containers ] ; then
 		eerror "Not loading container services"
 		ewarn "Remove /.block_containers to resume operation"

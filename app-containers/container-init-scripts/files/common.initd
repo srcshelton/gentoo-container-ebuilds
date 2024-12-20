@@ -1,4 +1,4 @@
-# Copyright 2021 Stuart Shelton
+# Copyright 2021-2023 Stuart Shelton
 # Distributed under the terms of the GNU General Public License v2
 
 # A note on ordering:
@@ -15,6 +15,26 @@
 #shellcheck shell=bash
 
 set -o pipefail >/dev/null 2>&1 || :
+
+# This script will be evaluated as soon as openrc is first invoked, before
+# the 'localmount' service has run, and so neither 'docker' nor 'podman' will
+# be available at this stage...
+#
+# Update: We also need 'command' for logging purposes, so need to evaluate this
+#         early.
+if [[ -d /usr/bin ]]; then
+	command='docker'
+	if type -pf podman >/dev/null; then
+		command='podman'
+		docker() {
+			test "${1:-}" = 'rm' && trap '' INT ;
+			podman ${@+"${@}"} ;
+			trap - INT ;
+		} # docker
+		export -f docker
+	fi
+	docker --version >/dev/null || exit 127
+fi
 
 case "${podman_memory_size:-}" in
 	# Set swap for memory sizes over 1GB to be sqrt(MEMORY_LIMIT), rounded
@@ -67,6 +87,12 @@ case "${podman_memory_size:-}" in
 		: "${PODMAN_MEMORY_LIMIT:="8g"}"
 		#: "${PODMAN_SWAP_LIMIT:="11g"}"
 		;;
+	xxl)
+		# Extra-Large
+		: "${PODMAN_MEMORY_RESERVATION:="8g"}"
+		: "${PODMAN_MEMORY_LIMIT:="16g"}"
+		#: "${PODMAN_SWAP_LIMIT:="20g"}"
+		;;
 	'')
 		: ;;
 	*)
@@ -74,18 +100,6 @@ case "${podman_memory_size:-}" in
 		;;
 esac
 : "${PODMAN_SWAP_LIMIT:="${PODMAN_MEMORY_LIMIT}"}"
-
-command='docker'
-if type -pf podman >/dev/null; then
-	command='podman'
-	docker() {
-		test "${1:-}" = 'rm' && trap '' INT ;
-		podman ${@+"${@}"} ;
-		trap - INT ;
-	} # docker
-	export -f docker
-fi
-docker --version >/dev/null || exit 127
 
 if [ -r /etc/containers/storage.conf ] &&
 		sed 's/#.*//' /etc/containers/storage.conf |
@@ -162,8 +176,12 @@ dockermount_defaults=(
 	"${dockermount_run}"
 )
 
-dockervolumes_hugetlb='--volume /dev/hugetlb:/dev/hugepages'
-dockervolumes_hugetlb1gb='--volume /dev/hugetlb1gb:/dev/hugepages'
+dockervolumes_hugetlb='--volume /dev/hugepages2M:/dev/hugepages'
+dockervolumes_hugetlb1gb='--volume /dev/hugepages1G:/dev/hugepages'
+
+dockervolumes+=(
+	--volume "/srv/${PN}"
+)
 
 # Used in _containers_check_paths, which can be called from multiple places
 container_dir_owner="${container_dir_owner-root}"
@@ -183,12 +201,18 @@ container_dir_lib="${container_dir_lib:-}"
 # Used in %PID% expansion, _containers_start_pre, _containers_start_post, _containers_stop_post
 container_svc_pid="${container_svc_pid-${container_dir_run-/var/run/${PN}}/${RC_SVCNAME}.pid}"
 
+container_log_prefix='container'
+if [[ -n "${command:-}" ]]; then
+	container_log_prefix="${command%% *}"
+fi
+
 #command_user='root:root'
 command_background="true"
 start_stop_daemon_wait=1000
+container_log_prefix="${command%% *}"
 start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" \
-	"--stdout /var/log/${PN}/${command%% *}-${PNV:-"${RC_SVCNAME}"}.log" \
-	"--stderr /var/log/${PN}/${command%% *}-${PNV:-"${RC_SVCNAME}"}.log" )"
+	"--stdout /var/log/${PN}/${container_log_prefix}-${PNV:-"${RC_SVCNAME}"}.log" \
+	"--stderr /var/log/${PN}/${container_log_prefix}-${PNV:-"${RC_SVCNAME}"}.log" )"
 pidfile="/var/run/containers/${RC_SVCNAME}.pid"
 
 container_stop_timeout=31
@@ -415,8 +439,10 @@ _containers_start_post() {
 			sleep ${sleep}
 			: $(( count = count + 1 ))
 		done
-		if ! [ -s "${pid_file}" ]; then
-			eerror "Timed-out waiting for '${PN}' PID in file '${pid_file}'"
+		if ! [ -e "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID file '${pid_file}' to be created"
+		elif ! [ -s "${pid_file}" ]; then
+			eerror "Timed-out waiting for '${PN}' PID file '${pid_file}' to be populated"
 		else
 			service_set_value 'startup_ticks' "${count}"
 			service_set_value 'startup_factor' "${factor}"
@@ -490,15 +516,15 @@ _containers_format_memory() {
 
 _containers_status() {
 	local output='einfo' entry='' file=''
-	local -i status=0
+	local -i container_status=0
 
-	default_status || status=${?}
+	default_status || container_status=${?}
 
 	if [ 'YES' = "${EINFO_QUIET:-}" ]; then
-		return ${status}
+		return ${container_status}
 	fi
 
-	if (( status )); then
+	if (( container_status )); then
 		output='ewarn'
 	else
 		status_host_pid="$( cat "${pidfile}" 2>/dev/null )" ||
@@ -544,7 +570,7 @@ _containers_status() {
 	fi
 
 	if [ $(( $( id -u ) )) -ne 0 ]; then
-		return ${status}
+		return ${container_status}
 	fi
 
 	if
@@ -555,28 +581,113 @@ _containers_status() {
 		return 1
 	fi
 
+	local field='' format=''
+	for field in ID ImageID Status CreatedAt RunningFor Exited StartedAt \
+		ExitedAt Mounts Labels State ExitCode
+	do
+		if [ -z "${format:-}" ]; then
+			format="{{.${field}}}"
+		else
+			format+="!{{.${field}}}"
+		fi
+	done
+	unset field
+	#veinfo "DEBUG: ${format}"
 	entry="$( docker ps -a \
 		--filter "name=${container_name}" \
-		--format '{{.ID}}!{{.ImageID}}!{{.Status}}!{{.CreatedAt}}!{{.RunningFor}}!{{.Mounts}}!{{.Labels}}'
-		#--format '{{.ID}}!{{.ImageID}}!{{.Status}}!{{.CreatedAt}}!{{.RunningFor}}!{{.Size}}!{{.Mounts}}!{{.Labels}}'
+		--format "${format}"
 		#--size \
 	)"
+	unset format
+	#veinfo "DEBUG: ${entry}"
 	if [ -z "${entry:-}" ]; then
 		eerror "podman has no data on container '${container_name}'"
 	else
-		local id image state created running mounts labels # size
-		local -i factor=1 ticks=0
-		while IFS='!' read -r id image state created running mounts labels; do # size
-			state="$( cut -d' ' -f 1 <<<"${state:-}" )"
+		local id image status created running exited mounts labels state other # size
+		local -i starttime=0 stoptime=0 exitcode=0 factor=1 ticks=0 peak=0
+		while IFS='!' read -r id image status created running exited starttime stoptime mounts labels state exitcode other; do # size
+			#local field=''
+			#for field in id image status created running exited starttime stoptime mounts labels state exitcode other; do
+			#	veinfo "DEBUG: ${field:-}=${!field:-}"
+			#done
+			if [ -n "${other:-}" ]; then
+				eerror "Read too many fields from entry:"
+				eerror "${entry}"
+				return 1
+			fi
+			if [ -z "${exitcode:-}" ]; then
+				eerror "Read too few fields from entry:"
+				eerror "${entry}"
+				return 1
+			fi
+
+			status="$( cut -d' ' -f 1 <<<"${status:-}" )"
 			created="$( cut -d'.' -f 1 <<<"${created:-}" | awk '{ print $2, $1 }' )"
 			labels="$( sed 's/^map\[// ; s/\]$//' <<<"${labels}" )"
 			mounts="$( sed 's/^\[// ; s/\]$//' <<<"${mounts}" )"
 			running="${running% ago}"
-			if [ "${state:-}" != 'Up' ]; then
+
+			if [ "${status:-}" != 'Up' ]; then
 				output='eerror'
 			fi
+
+			if [ -r /sys/fs/cgroup/libpod_parent/libpod-${id}*/memory.peak ]; then
+				peak="$( cat "$( readlink -e /sys/fs/cgroup/libpod_parent/libpod-${id}*/memory.peak )" )"
+				if (( peak )); then
+					if (( peak < 1024 )); then
+						$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} B"
+					elif (( peak < 1048576 )); then
+						(( peak = ( peak + 1 ) / 1024 ))
+						$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} KiB"
+					elif (( peak < 1073741824 )); then
+						(( peak = ( peak + 1024 ) / 1048576 ))
+						$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} MiB"
+					else
+						(( peak = ( peak + 1048576 ) / 1073741824 ))
+						$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} GiB"
+					fi
+				fi
+			fi
+
 			$output ''
-			$output "Image:  ${image:--}, ID: ${id:--}: (${state:-Unknown})${created:+ created ${created}}${running:+ running for ${running,,}}"
+
+			if [ "${exited:-}" = 'true' ]; then
+				local -i duration=0
+				(( duration = stoptime - starttime ))
+				local exittime=''
+				if (( duration < 60 )); then
+					exittime="${duration} seconds"
+				elif (( duration < ( 60 * 60 ) )); then
+					exittime="$(( duration / 60 )) minutes"
+				elif (( duration < ( 60 * 60 * 60 ) )); then
+					exittime="$(( duration / ( 60 * 60 ) )) hours"
+				elif (( duration < ( 60 * 60 * 60 * 24 ) )); then
+					exittime="$(( duration / ( 60 * 60 * 60 ) )) days"
+				elif (( duration < ( 60 * 60 * 60 * 24 * 7 ) )); then
+					exittime="$(( duration / ( 60 * 60 * 60 * 24 ) )) weeks"
+				# Skip 'months', as their length is too variable...
+				# ... this calculation also doesn't handle leap-years
+				else
+					exittime="$(( duration / ( 60 * 60 * 60 * 365 ) )) years"
+				fi
+
+				$output "Image:  ${image:-"-"}," \
+					"ID: ${id:-"-"}:" \
+					"(${status:-"Unknown"}:" \
+					"${exitcode})${created:+" created ${created}"}${running:+" (${running,,} ago)"}," \
+					"${exittime:+"ran for ${exittime}"} -" \
+					"now ${state:-"stopped"}"
+				unset exittime duration
+			else
+				if (( exitcode )); then
+					ewarn 'Read non-zero ExitCode for running container'
+				fi
+
+				$output "Image:  ${image:-"-"}," \
+					"ID: ${id:-"-"}:" \
+					"(${status:-"Unknown"})${created:+" created ${created}"}${running:+" ${state:-"running"} for ${running,,}"}"
+			fi
+
 			if [ -n "$( service_get_value 'startup_factor' )" ] && [ -n "$( service_get_value 'startup_ticks' )" ]; then
 				: $(( factor = $( service_get_value 'startup_factor' ) ))
 				: $(( ticks = $( service_get_value 'startup_ticks' ) ))
@@ -630,10 +741,10 @@ _containers_status() {
 				unset first mount
 			fi
 		done <<<"${entry}"
-		unset labels mounts running created state image id
+		unset other exitcode state labels mounts stoptime starttime exited running created status image id
 	fi
 
-	return ${status}
+	return ${container_status}
 } # _containers_status
 
 _containers_reload() {
@@ -701,21 +812,21 @@ _containers_reload() {
 
 	pid=0
 
-	while [ $(( oldpid )) -eq "$( # <- Syntax
-		awk '{ print $1 }' < "${pid_file}" || echo '0'
+	while [ ! -e "${pid_file}" ] || [ $(( oldpid )) -eq "$( # <- Syntax
+		awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
 	)" ] && [ $(( count )) -lt $(( wait )) ]; do
 		sleep ${sleep}
 		: $(( count = count + 1 ))
 	done 2>/dev/null
 
-	if [ $(( oldpid )) -eq "$( # <- Syntax
-		awk '{ print $1 }' < "${pid_file}" || echo '0'
+	if [ ! -e "${pid_file}" ] || [ $(( oldpid )) -eq "$( # <- Syntax
+		awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
 	)" ]; then
 		eerror "Timed-out waiting for reloaded '${RC_SVCNAME}' PID in file '${pid_file}'"
 	else
 		veinfo "Service '${RC_SVCNAME}' changed from host PID" \
 			"'${oldpid}' to container PID $( # <- Syntax
-				awk '{ print $1 }' < "${pid_file}" || echo '0'
+				awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
 			)"
 		have_pid=1
 	fi
