@@ -1,0 +1,7 @@
+arg!host	rufus
+describe!host	Originating ZXTM
+note	Send%20alert%20messages%20to%20Telegram%20bot%20%28user%3A%20%27miltonroad_net_bot%27%29
+program	telegram_bot_post.sh
+timeout	3
+type	program
+verbose	Yes
