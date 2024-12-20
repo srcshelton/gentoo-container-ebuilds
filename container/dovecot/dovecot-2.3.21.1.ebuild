@@ -1,4 +1,4 @@
-# Copyright 1999-2023 Gentoo Authors
+# Copyright 1999-2024 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=8
@@ -10,12 +10,15 @@ inherit ssl-cert
 MY_P="${P/_/.}"
 #MY_S="${PN}-ce-${PV}"
 major_minor="$(ver_cut 1-2)"
-sieve_version="0.5.20"
+sieve_version="0.5.21.1"
 if [[ ${PV} == *_rc* ]]; then
 	rc_dir="rc/"
 else
 	rc_dir=""
 fi
+
+DESCRIPTION="An IMAP and POP3 server written with security primarily in mind"
+HOMEPAGE="https://www.dovecot.org/"
 SRC_URI="https://dovecot.org/releases/${major_minor}/${rc_dir}${MY_P}.tar.gz
 	sieve? (
 	https://pigeonhole.dovecot.org/releases/${major_minor}/${rc_dir}${PN}-${major_minor}-pigeonhole-${sieve_version}.tar.gz
@@ -23,16 +26,14 @@ SRC_URI="https://dovecot.org/releases/${major_minor}/${rc_dir}${MY_P}.tar.gz
 	managesieve? (
 	https://pigeonhole.dovecot.org/releases/${major_minor}/${rc_dir}${PN}-${major_minor}-pigeonhole-${sieve_version}.tar.gz
 	) "
-DESCRIPTION="An IMAP and POP3 server written with security primarily in mind"
-HOMEPAGE="https://www.dovecot.org/"
-
-SLOT="0"
+S="${WORKDIR}/${MY_P}"
 LICENSE="LGPL-2.1 MIT"
-KEYWORDS="~alpha amd64 arm ~arm64 ~hppa ~ia64 ~mips ppc ~ppc64 ~riscv ~s390 ~sparc x86"
+SLOT="0/${PV}"
+KEYWORDS="~alpha amd64 arm ~arm64 ~hppa ~ia64 ~mips ppc ppc64 ~riscv ~s390 ~sparc x86"
 
 #IUSE_DOVECOT_AUTH="kerberos ldap lua mysql pam postgres sqlite"
 #IUSE_DOVECOT_COMPRESS="lz4 zstd"
-#IUSE_DOVECOT_OTHER="argon2 caps doc lucene managesieve rpc
+#IUSE_DOVECOT_OTHER="argon2 caps doc lucene managesieve rpc"
 
 #IUSE="argon2 caps doc kerberos ldap lua lucene lz4 managesieve mysql pam postgres rpc selinux sieve solr sqlite static-libs stemmer suid systemd tcpd textcat unwind zstd"
 IUSE="ipv6 ldap managesieve mysql pam postgres sieve"
@@ -45,8 +46,6 @@ RDEPEND="
 	acct-user/dovenull
 	net-mail/mailbase[pam?]
 	"
-
-S="${WORKDIR}/${MY_P}"
 
 src_prepare() {
 	for f in dovecot.init-r6_common; do
