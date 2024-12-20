@@ -1,4 +1,4 @@
-# Copyright 1999-2022 Gentoo Authors
+# Copyright 1999-2024 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
@@ -12,12 +12,12 @@ S="${WORKDIR}"/${PN}-${P}
 
 LICENSE="GPL-2"
 SLOT="0"
-KEYWORDS="~alpha amd64 arm arm64 hppa ~ia64 ~m68k ~mips ppc ppc64 ~riscv ~s390 sparc x86 ~x64-cygwin"
+KEYWORDS="~alpha amd64 arm arm64 hppa ~ia64 ~m68k ~mips ppc ppc64 ~riscv ~s390 sparc x86"
 IUSE="systemd unicode"
 
 RDEPEND="dev-libs/libpcre2"
 DEPEND="${RDEPEND}"
-BDEPEND="sys-devel/autoconf-archive
+BDEPEND="dev-build/autoconf-archive
 	virtual/pkgconfig"
 
 PATCHES=(
@@ -51,7 +51,7 @@ src_install() {
 
 pkg_preinst() {
 	if [[ -e "${ROOT}"/etc/metalog.conf && ! -d "${ROOT}"/etc/metalog ]] ; then
-		mkdir "${ROOT}"/etc/metalog
+		mkdir -p "${ROOT}"/etc/metalog
 		mv -f "${ROOT}"/etc/metalog.conf "${ROOT}"/etc/metalog/metalog.conf
 		export MOVED_METALOG_CONF=true
 	else
@@ -62,8 +62,8 @@ pkg_preinst() {
 pkg_postinst() {
 	if ${MOVED_METALOG_CONF} ; then
 		ewarn "The default metalog.conf file has been moved"
-		ewarn "from just /etc/metalog.conf to"
-		ewarn "/etc/metalog/metalog.conf.  If you had a standard"
+		ewarn "from just ${EROOT%/}/etc/metalog.conf to"
+		ewarn "${EROOT%/}/etc/metalog/metalog.conf.  If you had a standard"
 		ewarn "setup, the file has been moved for you."
 	fi
 }
