@@ -139,7 +139,8 @@ description_inspect="Launch container interactively"
 
 
 depend() {
-	need containers
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	use logger dns ypbind amavisd antivirus postfix_greylist net \
 		saslauthd spamd spampd opendkim opendmarc
 	if [ "${RC_SVCNAME}" = "postfix" ]; then
