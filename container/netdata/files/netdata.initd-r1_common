@@ -1,0 +1,137 @@
+#!/sbin/openrc-run
+
+: ${NETDATA_DIR:=/usr/libexec/netdata/plugins.d}
+: ${NETDATA_USER:=netdata}
+: ${NETDATA_GROUP:=netdata}
+: ${NETDATA_WAIT_EXIT_TIMEOUT:=15}
+
+podman_memory_size='small'
+
+PN="${RC_SVCNAME:=netdata}" # PN='netdata'
+PV='@PVR@'
+CATEGORY='net-analyzer'
+container_svc_pid='/var/run/netdata/netdata.pid'
+command_opts="-D -P \"%PID%\" ${NETDATA_EXTRA_ARGS:-}"
+
+container_dir_run_owner="${NETDATA_USER}"
+container_dir_run_group="${NETDATA_GROUP}"
+container_dir_log_owner="${NETDATA_USER}"
+container_dir_log_group="${NETDATA_GROUP}"
+container_use_git="${NETDATA_USE_GIT:-}"
+
+container_svc_wait=10
+
+container_git_ignore="
+/.container-hostname
+/edit-config"
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	--cap-add AUDIT_READ
+	--cap-add CHOWN
+	--cap-add DAC_OVERRIDE
+	--cap-add DAC_READ_SEARCH
+	--cap-add NET_ADMIN
+	--cap-add NET_RAW
+	--cap-add SETGID
+	--cap-add SETUID
+	--cap-add SYSLOG
+	--cap-add SYS_ADMIN
+	--cap-add SYS_PTRACE
+	--env NETDATA_ALARM_NOTIFY_DEBUG=1
+	--pid host
+	#--privileged
+	#--sysctl "net.ipv4.ping_group_range=290 290"
+	--workdir "${NETDATA_DIR}"
+)
+if ls -1d /dev/* | grep -q -- '^/dev/nvme' ; then
+	declare container_dev=''
+	#for container_dev in /dev/nvme* /dev/sd*; do
+	for container_dev in /dev/nvme*; do
+		dockeropts+=(
+			--device "${container_dev}:${container_dev}:rm"
+		)
+	done
+	unset container_dev
+fi
+dockernetwork+=(
+	--network host
+)
+#dockerports+=(
+#	--publish 19999:19999/tcp
+#)
+
+dockermounts=(
+	${dockermount_defaults[@]}
+
+	${dockermount_ssl}
+)
+if [[ -d /var/log/smartd ]]; then
+	dockermounts+=( # <- Syntax
+		--mount type=bind,source=/var/log/smartd,destination=/var/log/smartd,readonly
+	)
+fi
+if [[ -d /var/run/dovecot ]]; then
+	dockermounts+=( # <- Syntax
+		--mount type=bind,source=/var/run/dovecot,destination=/var/run/dovecot,readonly
+	)
+fi
+dockervolumes+=( # <- Syntax
+	--volume /etc/passwd:/host/etc/passwd:ro
+	--volume /etc/group:/host/etc/group:ro
+	--volume /proc:/host/proc:ro
+	--volume /sys:/host/sys:ro
+	--volume /sys/kernel/debug:/host/sys/kernel/debug:ro
+	--volume /etc/os-release:/host/etc/os-release:ro
+)
+if [[ -S /var/spool/postfix/public/showq ]]; then
+	dockervolumes+=( # <- Syntax
+		--volume /var/spool/postfix/public:/var/spool/postfix/public:ro
+	)
+fi
+if [[ -S /var/run/podman/podman.sock ]]; then
+	dockervolumes+=( # <- Syntax
+		--volume /var/run/podman/podman.sock:/var/run/docker.sock:ro
+	)
+fi
+if [[ -S /var/run/mysqld/mysqld.sock ]]; then
+	#dockermounts+=( # <- Syntax
+	#	--mount type=bind,source=/etc/mysql,destination=/etc/mysql,readonly
+	#)
+	dockervolumes+=( # <- Syntax
+		--volume /var/run/mysqld/mysqld.sock:/var/run/mysqld/mysqld.sock:ro
+	)
+fi
+if [[ -d /var/lib/dhcp ]]; then
+	dockervolumes+=( # Syntax
+		--volume /var/lib/dhcp/dhcpd.leases:/var/lib/dhcp/dhcpd.leases:ro
+		--volume /var/lib/dhcp/dhcpd6.leases:/var/lib/dhcp/dhcpd6.leases:ro
+	)
+fi
+
+_containers_set_args
+
+#command_user="${NETDATA_USER}:${NETDATA_GROUP}"
+retry="TERM/${NETDATA_WAIT_EXIT_TIMEOUT}/KILL/1"
+command_progress='true'
+
+description="Netdata system monitoring agent"
+
+
+depend() {
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
+	use localmount logger podman
+	need net
+	after apache2 squid nginx mysql named opensips upsd hostapd postfix lm_sensors
+}
+
+start_post() {
+	_containers_start_post
+
+	echo "${container_name:-"openrc-${PNV:-"${PN}"}-${PV}"}" > \
+		"/etc/${PN:-"netdata"}/.container-hostname"
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
