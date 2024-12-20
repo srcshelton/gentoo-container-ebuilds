@@ -2,7 +2,7 @@
 # Copyright 1999-2019 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
-podman_memory_size='nano'
+podman_memory_size='micro'
 
 PN="${RC_SVCNAME:=bitlbee}" # PN='bitlbee'
 PV='@PVR@'
@@ -41,8 +41,9 @@ description="irc to IM gateway that support multiple IM protocols"
 
 
 depend() {
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	after logger
-	need containers
 }
 
 # vi: set filetype=gentoo-init-d colorcolumn=80:
