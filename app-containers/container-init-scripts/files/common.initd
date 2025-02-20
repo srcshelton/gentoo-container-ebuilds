@@ -20,8 +20,8 @@ set -o pipefail >/dev/null 2>&1 || :
 # the 'localmount' service has run, and so neither 'docker' nor 'podman' will
 # be available at this stage...
 #
-# Update: We also need 'command' for logging purposes, so need to evaluate this
-#         early.
+# Update: We also need 'command' for logging purposes, so need to evaluate
+#         this early.
 if [[ -d /usr/bin ]]; then
 	command='docker'
 	if type -pf podman >/dev/null; then
@@ -209,7 +209,6 @@ fi
 #command_user='root:root'
 command_background="true"
 start_stop_daemon_wait=1000
-container_log_prefix="${command%% *}"
 start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" \
 	"--stdout /var/log/${PN}/${container_log_prefix}-${PNV:-"${RC_SVCNAME}"}.log" \
 	"--stderr /var/log/${PN}/${container_log_prefix}-${PNV:-"${RC_SVCNAME}"}.log" )"
@@ -336,6 +335,7 @@ _containers_inspect() {
 
 	einfo "Launching image 'localhost/${dockerimage}' as '${container_name_root:-"${container_name}"}-inspect' ..."
 	docker --log-level=info run "${command_docker_args[@]:-}" \
+			"${command_docker_daemon_args[@]:-}" \
 			--entrypoint=/bin/sh \
 			--interactive \
 			--name "${container_name_root:-"${container_name}"}-inspect" \
