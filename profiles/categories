@@ -1,6 +1,10 @@
 acct-group
 acct-user
 app-admin
-container
+app-containers
+container-apps
+container-services
+dev-libs
 net-dns
 net-misc
+virtual
