@@ -1,0 +1,61 @@
+#!/sbin/openrc-run
+# Copyright 1999-2014 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${TUNED_PIDFILE:=/var/run/${RC_SVCNAME}/${RC_SVCNAME}.pid}
+
+podman_memory_size='micro'
+
+PN="${RC_SVCNAME:=tuned}" # PN='tuned'
+PV='@PVR@'
+CATEGORY='sys-apps'
+container_svc_pid="${TUNED_PIDFILE}"
+command_opts="--pid %PID% --log /var/log/tuned/tuned.log"
+
+container_use_git="${TUNED_USE_GIT:-}"
+
+container_svc_wait=5
+
+. /etc/init.d/_containers_common || return ${?}
+
+dockeropts+=(
+	--privileged
+	--restart never
+)
+dockernetwork+=(
+	--network host
+)
+
+dockermounts=(
+	#"${dockermount_syslog}"
+	"${dockermount_etc},ro=false"
+	"${dockermount_log}"
+	"${dockermount_run}"
+)
+
+_containers_set_args
+
+#command_user="root:root"
+command_background="false"
+start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" )"
+
+description="tuned is a daemon for monitoring and adaptive tuning of system devices."
+
+depend() {
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
+	after logger
+}
+
+start_pre() {
+	read -r -d '' container_git_ignore <<-EOF
+
+		**/*_profile
+		**/bootcmdline
+		**/profile_mode
+	EOF
+
+	_containers_start_pre || { eend ${?}; return; }
+}
+
+# vi: set filetype=gentoo-init-d colorcolumn=80:
