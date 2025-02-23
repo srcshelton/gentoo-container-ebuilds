@@ -38,7 +38,7 @@ RDEPEND="${COMMON_DEPEND}
 	!net-misc/ntpsec
 	!openntpd? ( !net-misc/openntpd )
 "
-PDEPEND="openntpd? ( container/openntpd )"
+PDEPEND="openntpd? ( container-services/openntpd )"
 
 S="${WORKDIR}/${MY_P}"
 
