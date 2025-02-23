@@ -29,7 +29,7 @@ SLOT="$(ver_cut 1-2)"
 #IUSE="acl apache2 argon2 bcmath berkdb bzip2 calendar cdb cgi cjk +cli coverage +ctype curl debug embed enchant exif ffi +fileinfo +filter firebird +flatfile fpm ftp gd gdbm gmp +iconv imap inifile intl iodbc ipv6 +json kerberos ldap ldap-sasl libedit libressl lmdb mhash mssql mysql mysqli nls oci8-instant-client odbc +opcache pcntl pdo +phar phpdbg +posix postgres qdbm readline selinux +session session-mm sharedmem +simplexml snmp soap sockets sodium spell sqlite ssl systemd sysvipc test threads tidy +tokenizer tokyocabinet truetype unicode webp +xml xmlreader xmlrpc xmlwriter xpm xslt zip zlib"
 
 # FIXME: Use some derivative of virtual/httpd-php
-BDEPEND="container/lighttpd:="
+BDEPEND="container-services/lighttpd:="
 RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
@@ -44,7 +44,7 @@ src_prepare() {
 	for f in php-fpm.init-r5_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
-			-e "s#@CPVR@#$( best_version -r container/lighttpd | sed 's|^container/lighttpd-||' )#" \
+			-e "s#@CPVR@#$( best_version -r container-services/lighttpd | sed 's|^container-services/lighttpd-||' )#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
 	done
 
