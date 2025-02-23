@@ -37,7 +37,7 @@ REQUIRED_USE="
 RESTRICT="!test? ( test )"
 
 COMMON_DEPEND="
-	container/lighttpd:="
+	container-services/lighttpd:="
 
 RDEPEND="${COMMON_DEPEND}
 	|| ( app-containers/podman app-containers/docker )
@@ -54,7 +54,7 @@ src_prepare() {
 	for f in php-fpm.init-r5_common; do
 		sed \
 			-e "/^\s${PN}${PVR%.*})\sPV=''$/s#''#'${PVR}'#" \
-			-e "s#@CPVR@#$( best_version -r container/lighttpd | sed 's|^container/lighttpd-||' )#" \
+			-e "s#@CPVR@#$( best_version -r container-services/lighttpd | sed 's|^container-services/lighttpd-||' )#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
 	done
 
