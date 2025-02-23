@@ -9,12 +9,12 @@ KEYWORDS="~alpha amd64 arm arm64 hppa ~ia64 ~m68k ~mips ppc ppc64 ~riscv s390 sp
 
 RDEPEND="|| (
 	app-admin/metalog
-	container/metalog
+	container-services/metalog
 	app-admin/rsyslog
 	app-admin/socklog
 	app-admin/sysklogd
 	app-admin/syslog-ng
-	container/syslog-ng
+	container-services/syslog-ng
 	sys-apps/busybox[syslog]
 	>=sys-apps/systemd-38
 )"
