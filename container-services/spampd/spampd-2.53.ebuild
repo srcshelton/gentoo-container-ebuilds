@@ -13,7 +13,7 @@ KEYWORDS="amd64 ~ppc x86"
 #RESTRICT="mirror"
 SLOT="0"
 
-DEPEND="container/spamassassin:="
+DEPEND="container-services/spamassassin:="
 RDEPEND="${DEPEND}
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
@@ -27,7 +27,7 @@ src_prepare() {
 	for f in init-r1_common; do
 		sed \
 			-e "s#@PVR@#${PVR}#" \
-			-e "s#@PPVR@#$( best_version -r container/spamassassin | sed 's|^container/spamassassin-||' )#" \
+			-e "s#@PPVR@#$( best_version -r container-services/spamassassin | sed 's|^container-services/spamassassin-||' )#" \
 			"${FILESDIR}/${f}" > "${T}/${f%.in}" || die
 	done
 
