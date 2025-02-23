@@ -23,5 +23,9 @@ Modified ebuilds:
 
 Container OpenRC configurations:
 
-* container/\*
+* container-services/\*
+
+Container wrappers:
+
+* container-apps/\*
 
