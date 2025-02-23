@@ -21,7 +21,7 @@ RDEPEND="
 	exim? ( mail-mta/exim )
 	netqmail? ( mail-mta/netqmail )
 	notqmail? ( mail-mta/notqmail )
-	postfix? ( || ( container/postfix mail-mta/postfix ) )
+	postfix? ( || ( container-services/postfix mail-mta/postfix ) )
 	sendmail? ( mail-mta/sendmail )
 	opensmtpd? ( mail-mta/opensmtpd[mta] )
 	!no-mta? ( !nullmailer? ( !msmtp? ( !ssmtp? ( !courier? ( !esmtp? ( !exim? ( !netqmail? ( !notqmail? ( !postfix? ( !sendmail? ( !opensmtpd? (
@@ -33,7 +33,7 @@ RDEPEND="
 				mail-mta/exim
 				mail-mta/netqmail
 				mail-mta/notqmail
-				container/postfix
+				container-services/postfix
 				mail-mta/postfix
 				mail-mta/sendmail
 				mail-mta/opensmtpd[mta] )
