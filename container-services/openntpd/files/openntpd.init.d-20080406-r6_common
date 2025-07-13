@@ -54,4 +54,29 @@ depend() {
 	use dns logger
 }
 
-# vi: set filetype=gentoo-init-d colorcolumn=80:
+start_pre() {
+	_containers_check_paths || return ${?}
+
+	if ! [[ -e /etc/ssl/cert.pem ]]; then
+		if (( ${PV:0:1} <= 6 & ${PV:2:1} <= 2 )); then
+			# openntpd:6.2 expects a libretls CA file in /etc/ssl/cert.pem, so
+			# we should try to provide this...
+			if [[ -d /etc/ssl && -w /etc/ssl ]] &&
+					touch -ac /etc/ssl/certs/ca-certificates.crt 2>/dev/null
+			then
+				ewarn "Linking 'certs/ca-certificates.crt' to 'cert.pem' in" \
+					"/etc/ssl for libretls compatibiliity"
+				ln -s certs/ca-certificates.crt /etc/ssl/cert.pem ||
+					eerror "Linking 'certs/ca-certificates.crt' to" \
+						"'cert.pem' in /etc/ssl failed: ${?}"
+			else
+				eerror "Unable to write to '/etc/ssl/cert.pem': ${?}"
+			fi
+			test -s /etc/ssl/cert.pem || return 1
+		fi
+	fi
+
+	_containers_start_pre
+} # start_pre
+
+# vi: set filetype=gentoo-init-d colorcolumn=80 sw=4 ts=4:
