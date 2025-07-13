@@ -1,0 +1,14 @@
+# conf.d/_containers_common
+#
+
+# Optionally link container memory size requirements to core scheduling...
+#
+# N.B. When an x86 system has SMT/Hyperthreading enabled, there is no concept
+#      of a primary and a secondary core, all resources are divided between the
+#      two logical processors - and therefore there is no need to schedule any
+#      differently.
+
+# e.g. Orion O6/CIX P1 (CD8180)
+#cpu_cluster_little='1-4'
+#cpu_cluster_medium='5-8'
+#cpu_cluster_big='0,9-11'
