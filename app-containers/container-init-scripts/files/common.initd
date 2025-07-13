@@ -1,4 +1,4 @@
-# Copyright 2021-2023 Stuart Shelton
+# Copyright 2021-2025 Stuart Shelton
 # Distributed under the terms of the GNU General Public License v2
 
 # A note on ordering:
@@ -15,6 +15,15 @@
 #shellcheck shell=bash
 
 set -o pipefail >/dev/null 2>&1 || :
+
+add_opt() {
+	local key="${1:-}"
+	local value="${2:-}"
+
+	if [[ -n "${key:-}" && -n "${value:-}" ]]; then
+		echo "${key} ${value}"
+	fi
+} # add_opt
 
 # This script will be evaluated as soon as openrc is first invoked, before
 # the 'localmount' service has run, and so neither 'docker' nor 'podman' will
@@ -36,6 +45,15 @@ if [[ -d /usr/bin ]]; then
 	docker --version >/dev/null || exit 127
 fi
 
+if [ -s "${RC_PREFIX%/}/etc/conf.d/_containers_common" ]; then
+	eval "$( # <- Syntax
+			source "${RC_PREFIX%/}/etc/conf.d/_containers_common" \
+				>/dev/null 2>&1
+			set | grep '^cpu_cluster_[a-z]\+='
+		)"
+fi
+
+cpu_cluster=''
 case "${podman_memory_size:-}" in
 	# Set swap for memory sizes over 1GB to be sqrt(MEMORY_LIMIT), rounded
 	# up...
@@ -44,54 +62,63 @@ case "${podman_memory_size:-}" in
 		: "${PODMAN_MEMORY_RESERVATION:="16m"}"
 		: "${PODMAN_MEMORY_LIMIT:="32m"}"
 		#: "${PODMAN_SWAP_LIMIT:="1g"}"
+		cpu_cluster="${cpu_cluster_little:-}"
 		;;
 	nano)
 		# Nano
 		: "${PODMAN_MEMORY_RESERVATION:="32m"}"
 		: "${PODMAN_MEMORY_LIMIT:="64m"}"
 		#: "${PODMAN_SWAP_LIMIT:="1g"}"
+		cpu_cluster="${cpu_cluster_little:-}"
 		;;
 	micro)
 		# Micro
 		: "${PODMAN_MEMORY_RESERVATION:="128m"}"
 		: "${PODMAN_MEMORY_LIMIT:="256m"}"
 		#: "${PODMAN_SWAP_LIMIT:="1g"}"
+		cpu_cluster="${cpu_cluster_little:-}"
 		;;
 	tiny)
 		# Tiny
 		: "${PODMAN_MEMORY_RESERVATION:="256m"}"
 		: "${PODMAN_MEMORY_LIMIT:="512m"}"
 		#: "${PODMAN_SWAP_LIMIT:="1g"}"
+		cpu_cluster="${cpu_cluster_little:-}"
 		;;
 	small)
 		# Small
 		: "${PODMAN_MEMORY_RESERVATION:="512m"}"
 		: "${PODMAN_MEMORY_LIMIT:="1g"}"
 		#: "${PODMAN_SWAP_LIMIT:="2g"}"
+		cpu_cluster="${cpu_cluster_medium:-}"
 		;;
 	medium)
 		# Medium
 		: "${PODMAN_MEMORY_RESERVATION:="1g"}"
 		: "${PODMAN_MEMORY_LIMIT:="2g"}"
 		#: "${PODMAN_SWAP_LIMIT:="3g"}"
+		cpu_cluster="${cpu_cluster_medium:-}"
 		;;
 	large)
 		# Large
 		: "${PODMAN_MEMORY_RESERVATION:="2g"}"
 		: "${PODMAN_MEMORY_LIMIT:="4g"}"
 		#: "${PODMAN_SWAP_LIMIT:="6g"}"
+		cpu_cluster="${cpu_cluster_big:-}"
 		;;
 	xl|extra-large)
 		# Extra-Large
 		: "${PODMAN_MEMORY_RESERVATION:="4g"}"
 		: "${PODMAN_MEMORY_LIMIT:="8g"}"
 		#: "${PODMAN_SWAP_LIMIT:="11g"}"
+		cpu_cluster="${cpu_cluster_big:-}"
 		;;
 	xxl)
 		# Extra-Large
 		: "${PODMAN_MEMORY_RESERVATION:="8g"}"
 		: "${PODMAN_MEMORY_LIMIT:="16g"}"
 		#: "${PODMAN_SWAP_LIMIT:="20g"}"
+		cpu_cluster="${cpu_cluster_big:-}"
 		;;
 	'')
 		: ;;
@@ -100,6 +127,8 @@ case "${podman_memory_size:-}" in
 		;;
 esac
 : "${PODMAN_SWAP_LIMIT:="${PODMAN_MEMORY_LIMIT}"}"
+: "${PODMAN_CPU_CLUSTER:="${cpu_cluster:-}"}"
+unset cpu_cluster
 
 if [ -r /etc/containers/storage.conf ] &&
 		sed 's/#.*//' /etc/containers/storage.conf |
@@ -137,9 +166,11 @@ dockeropts+=(
 
 	--cap-drop ALL
 
-	${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
-	${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
-	${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
+	$(add_opt --cpuset-cpus "${PODMAN_CPU_CLUSTER}")
+
+	$(add_opt --memory-reservation "${PODMAN_MEMORY_RESERVATION,,}")
+	$(add_opt --memory "${PODMAN_MEMORY_LIMIT,,}")
+	$(add_opt --memory-swap "${PODMAN_SWAP_LIMIT,,}")
 
 	# Prevents containers from being stopped by sending signals to podman
 	#--init
@@ -150,6 +181,32 @@ dockeropts+=(
 	#--rm
 	--tty
 )
+# We might not have a cgroup yet?
+if [ -s "/sys/fs/cgroup/openrc.${RC_SVCNAME}/memory.max" ]; then
+	have_memory_cgroup=1
+elif [ $(( $(
+		find /sys/fs/cgroup/ \
+				-mindepth 1 \
+				-maxdepth 2 \
+				-name 'memory.max' \
+				-print |
+			wc -l
+	) )) -gt 0 ]
+then
+	have_memory_cgroup=1
+fi
+if [ $(( have_memory_cgroup )) -eq 1 ]; then
+	dockeropts+=(
+		${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+		${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+		${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
+	)
+else
+	ewarn "Kernel appears to be lacking memory cgroup support - no" \
+		"memory limits will be applied or enforced"
+fi
+unset have_memory_cgroup
+
 dockernetwork+=(
 	# "Port mappings have been discarded as one of the Host, Container,
 	#  Pod, and None network modes are in use"
@@ -210,8 +267,8 @@ fi
 command_background="true"
 start_stop_daemon_wait=1000
 start_stop_daemon_args="$( echo "--wait ${start_stop_daemon_wait}" \
-	"--stdout /var/log/${PN}/${container_log_prefix}-${PNV:-"${RC_SVCNAME}"}.log" \
-	"--stderr /var/log/${PN}/${container_log_prefix}-${PNV:-"${RC_SVCNAME}"}.log" )"
+	"--stdout /var/log/${container_log_prefix}/${container_log_prefix}-${PNV:-"${RC_SVCNAME}"}.log" \
+	"--stderr /var/log/${container_log_prefix}/${container_log_prefix}-${PNV:-"${RC_SVCNAME}"}.log" )"
 pidfile="/var/run/containers/${RC_SVCNAME}.pid"
 
 container_stop_timeout=31
@@ -237,7 +294,7 @@ _containers_set_args() {
 	#shellcheck disable=SC2206
 	command_docker_args=(
 		${dockeropts[@]:-}
-		${container_entrypoint:+--entrypoint ${container_entrypoint}}
+		$(add_opt --entrypoint "${container_entrypoint}")
 		${dockermounts[@]:-}
 		${dockervolumes[@]:-}
 	)
@@ -257,6 +314,7 @@ _containers_set_args() {
 	)
 	command_docker_daemon_args=(
 		--image-volume tmpfs
+		--replace
 		--sdnotify conmon
 		--systemd false
 	)
@@ -267,7 +325,7 @@ _containers_set_args() {
 			"${command_docker_pid_args[*]:-}" \
 			"${command_docker_daemon_args[*]:-}" \
 			"localhost/${dockerimage}" \
-			"${command_opts:+${command_opts/\%PID\%/${container_svc_pid}}}"
+			"${command_opts:+"${command_opts/\%PID\%/${container_svc_pid}}"}"
 	)"
 
 	return 0
@@ -335,7 +393,7 @@ _containers_inspect() {
 
 	einfo "Launching image 'localhost/${dockerimage}' as '${container_name_root:-"${container_name}"}-inspect' ..."
 	docker --log-level=info run "${command_docker_args[@]:-}" \
-			"${command_docker_daemon_args[@]:-}" \
+			${command_docker_daemon_args[@]/--replace} \
 			--entrypoint=/bin/sh \
 			--interactive \
 			--name "${container_name_root:-"${container_name}"}-inspect" \
@@ -536,8 +594,8 @@ _containers_status() {
 			eerror "Unable to read container PID" \
 				"'${status_container_pid:-}': ${?}"
 		if
-			[ "${status_host_pid:-1}" = '1' ] ||
-			[ "${status_container_pid:-1}" = '1' ]
+			[ "${status_host_pid:-"1"}" = '1' ] ||
+			[ "${status_container_pid:-"1"}" = '1' ]
 		then
 			output='eerror'
 		fi
