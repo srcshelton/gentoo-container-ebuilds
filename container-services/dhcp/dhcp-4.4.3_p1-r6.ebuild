@@ -19,7 +19,7 @@ LICENSE="MPL-2.0 BSD SSLeay GPL-2" # GPL-2 only for init script
 SLOT="0"
 KEYWORDS="~alpha amd64 arm arm64 ~hppa ~ia64 ~loong ~m68k ~mips ppc ppc64 ~riscv ~s390 sparc x86"
 #IUSE="+client ipv6 ldap selinux +server ssl systemd +tmpfiles vim-syntax"
-IUSE="-ipv6 ldap +server"
+IUSE="-ipv6 ldap +server vim-syntax"
 
 BDEPEND="
 	|| ( sys-apps/coreutils sys-apps/busybox[make-symlinks] )"
@@ -29,7 +29,8 @@ RDEPEND="
 	app-containers/container-init-scripts
 	acct-group/dhcp
 	acct-user/dhcp
-	!net-misc/dhcp[server(+)]"
+	!net-misc/dhcp[server(+)]
+	vim-syntax? ( app-vim/dhcpd-syntax )"
 
 S="${WORKDIR}"
 
