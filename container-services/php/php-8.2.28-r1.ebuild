@@ -1,4 +1,4 @@
-# Copyright 1999-2024 Gentoo Authors
+# Copyright 1999-2025 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 #### The data in the files/ subdirectory of this ebuild are a combination ####
@@ -19,22 +19,22 @@ LICENSE="PHP-3.01
 	unicode? ( BSD-2 LGPL-2.1 )"
 
 SLOT="$(ver_cut 1-2)"
-KEYWORDS="~alpha amd64 arm arm64 ~hppa ~loong ~mips ~ppc ~ppc64 ~riscv ~s390 sparc x86 ~amd64-linux ~x86-linux ~ppc-macos ~x64-macos"
+KEYWORDS="~alpha amd64 arm arm64 ~hppa ~loong ~mips ppc ppc64 ~riscv ~s390 sparc ~x86 ~amd64-linux ~x86-linux ~ppc-macos ~x64-macos"
 
 S="${WORKDIR}"
 
 # We can build the following SAPIs in the given order
-#SAPIS="fpm"
+#SAPIS="embed cli cgi fpm apache2 phpdbg"
 
 # SAPIs and SAPI-specific USE flags (cli SAPI is default on):
-#IUSE="acl apache2 apparmor argon2 avif bcmath berkdb bzip2 calendar cdb cgi cjk +cli +ctype curl debug embed enchant exif ffi +fileinfo +filter firebird +flatfile fpm ftp gd gdbm gmp +iconv imap inifile intl iodbc ipv6 +jit kerberos ldap ldap-sasl libedit lmdb mhash mssql mysql mysqli nls oci8-instant-client odbc +opcache pcntl pdo +phar phpdbg +posix postgres qdbm readline selinux +session session-mm sharedmem +simplexml snmp soap sockets sodium spell sqlite ssl systemd sysvipc test threads tidy +tokenizer tokyocabinet truetype unicode valgrind webp +xml xmlreader xmlwriter xpm xslt zip zlib"
-IUSE="bcmath +fpm gd test unicode zlib"
+#IUSE="acl apache2 apparmor argon2 avif bcmath berkdb bzip2 calendar cdb cgi cjk +cli +ctype curl debug embed enchant exif ffi +fileinfo +filter +flatfile fpm ftp gd gdbm gmp +iconv imap inifile intl iodbc ipv6 +jit kerberos ldap ldap-sasl libedit lmdb mhash mssql mysql mysqli nls oci8-instant-client odbc +opcache +opcache-jit pcntl pdo +phar phpdbg +posix postgres qdbm readline selinux +session session-mm sharedmem +simplexml snmp soap sockets sodium spell sqlite ssl systemd sysvipc test threads tidy +tokenizer tokyocabinet truetype unicode valgrind webp +xml xmlreader xmlwriter xpm xslt zip zlib"
+IUSE="bcmath +fpm gd unicode zlib"
 
 REQUIRED_USE="
 	gd? ( zlib )
 "
 
-RESTRICT="!test? ( test )"
+#RESTRICT="!test? ( test )"
 
 COMMON_DEPEND="
 	container-services/lighttpd:="
@@ -66,16 +66,34 @@ src_install() {
 	sed -e "s|/lib/|/$(get_libdir)/|g" -i "${ED}/etc/env.d/20php${SLOT}" || die
 	sed -e "s|php5|php${SLOT}|g" -i "${ED}/etc/env.d/20php${SLOT}" || die
 
-	# set php-config variable correctly (bug #278439)
-	sed -e "s:^\(php_sapis=\)\".*\"$:\1\"${sapi_list}\":" -i \
-		"${ED}/usr/$(get_libdir)/php${SLOT}/bin/php-config" || die
-
 	insinto /etc/logrotate.d/
 	newins "${FILESDIR}"/php.logrotate php
 	newins "${FILESDIR}"/php-fpm.logrotate php-fpm
 }
 
 pkg_postinst() {
+	if ! has "php${SLOT/./-}" ${PHP_TARGETS}; then
+	   elog "To build extensions for this version of PHP, you will need to"
+	   elog "add php${SLOT/./-} to your PHP_TARGETS USE_EXPAND variable."
+	   elog
+	fi
+
+	# Warn about the removal of PHP_INI_VERSION if the user has it set.
+	if [[ -n "${PHP_INI_VERSION}" ]]; then
+		ewarn 'The PHP_INI_VERSION variable has been phased out. You may'
+		ewarn 'remove it from your configuration at your convenience. See'
+		ewarn
+		ewarn '  https://bugs.gentoo.org/611214'
+		ewarn
+		ewarn 'for more information.'
+	fi
+
+	elog "For details on how version slotting works, please see"
+	elog "the wiki:"
+	elog
+	elog "  https://wiki.gentoo.org/wiki/PHP"
+	elog
+
 	einfo "The following container mounts are required for ${PN}:"
 	einfo
 	einfo "    /etc/${PN}"
