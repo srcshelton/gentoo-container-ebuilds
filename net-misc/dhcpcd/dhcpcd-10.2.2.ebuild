@@ -1,42 +1,58 @@
-# Copyright 1999-2021 Gentoo Authors
+# Copyright 1999-2025 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
-EAPI=7
+EAPI=8
 
-inherit systemd toolchain-funcs
+inherit systemd optfeature toolchain-funcs
 
-if [[ ${PV} == "9999" ]]; then
+if [[ ${PV} == 9999 ]]; then
 	inherit git-r3
-	EGIT_REPO_URI="https://roy.marples.name/cgit/dhcpcd.git"
+	EGIT_REPO_URI="https://github.com/NetworkConfiguration/dhcpcd.git"
 else
 	MY_P="${P/_alpha/-alpha}"
 	MY_P="${MY_P/_beta/-beta}"
 	MY_P="${MY_P/_rc/-rc}"
-	SRC_URI="https://roy.marples.name/downloads/${PN}/${MY_P}.tar.xz"
-	KEYWORDS="~alpha amd64 arm arm64 hppa ~ia64 ~m68k ~mips ppc ppc64 ~riscv ~s390 sparc x86 ~amd64-linux ~x86-linux"
+	SRC_URI="https://github.com/NetworkConfiguration/dhcpcd/releases/download/v${PV}/${MY_P}.tar.xz"
 	S="${WORKDIR}/${MY_P}"
+
+	KEYWORDS="~alpha amd64 arm arm64 hppa ~loong ~m68k ~mips ppc ppc64 ~riscv ~s390 sparc x86 ~amd64-linux ~x86-linux"
 fi
 
 DESCRIPTION="A fully featured, yet light weight RFC2131 compliant DHCP client"
-HOMEPAGE="https://roy.marples.name/projects/dhcpcd"
-LICENSE="BSD-2"
-SLOT="0"
-IUSE="debug elibc_glibc +embedded ipv6 privsep systemd +udev"
+HOMEPAGE="https://github.com/NetworkConfiguration/dhcpcd/ https://roy.marples.name/projects/dhcpcd/"
 
-COMMON_DEPEND="udev? ( virtual/udev )"
-DEPEND="${COMMON_DEPEND}"
-RDEPEND="
-	${COMMON_DEPEND}
+LICENSE="BSD-2 BSD ISC MIT"
+SLOT="0"
+IUSE="debug +embedded ipv6 privsep systemd +udev"
+
+DEPEND="
+	app-crypt/libmd
+	udev? ( virtual/udev )
+"
+RDEPEND="${DEPEND}
 	privsep? (
 		acct-group/dhcpcd
 		acct-user/dhcpcd
 	)
 "
 
+QA_CONFIG_IMPL_DECL_SKIP=(
+	# These don't exist on Linux/glibc (bug #900264)
+	memset_explicit
+	memset_s
+	setproctitle
+	strtoi
+	consttime_memequal
+	SHA256_Init
+	hmac
+	# These may exist on some glibc versions, but the checks fail due to
+	# -Werror / undefined reference no matter what. bug #924825
+	arc4random
+	arc4random_uniform
+)
+
 PATCHES=(
-	"${FILESDIR}/${P}-memleak_fix.patch"
-	"${FILESDIR}/${P}-unlink_socket.patch"
-	"${FILESDIR}/${P}-sparc_privsep.patch" #776178
+	"${FILESDIR}"/${PN}-10.0.6-fix-lib-check.patch
 )
 
 src_configure() {
@@ -152,9 +168,5 @@ pkg_postinst() {
 		elog "https://bugs.gentoo.org/show_bug.cgi?id=477356"
 	fi
 
-	if ! has_version net-dns/bind-tools; then
-		elog
-		elog "If you activate the lookup-hostname hook to look up your hostname"
-		elog "using the dns, you need to install net-dns/bind-tools."
-	fi
+	optfeature "lookup-hostname hook" net-dns/bind-tools
 }
