@@ -26,7 +26,18 @@ case " ${DHCPD_OPTS} " in
 		;;
 esac
 
-podman_memory_size='pico'
+pagesize="$( getconf PAGE_SIZE 2>/dev/null )" || :
+case "${pagesize:-"4096"}" in
+	65536)
+		# Kernel page-size of 64k...
+		podman_memory_size='nano'
+		;;
+	*)
+		# ...kernel page-size of 16k or less
+		podman_memory_size='pico'
+		;;
+esac
+unset pagesize
 
 PN='dhcp' # PN="${RC_SVCNAME:=dhcp}"
 PNV="$( echo "${RC_SVCNAME}" | sed 's/dhcpd/dhcp/' )"
@@ -87,6 +98,7 @@ required_files="${DHCPD_CONF}"
 depend() {
 	[[ "$( type -t _containers_depend )" == 'function' ]] &&
 		_containers_depend
+	need net
 	use dns logger
 }
 
@@ -146,6 +158,8 @@ checkconfig() {
 }
 
 inspect() {
+	_checkpaths
+
 	_containers_inspect
 }
 
