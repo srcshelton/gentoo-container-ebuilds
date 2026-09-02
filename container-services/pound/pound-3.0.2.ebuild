@@ -1,21 +1,22 @@
-# Copyright 1999-2023 Gentoo Authors
+# Copyright 1999-2022 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
 
-DESCRIPTION="An HTTP/HTTPS reverse-proxy and load-balancer"
-HOMEPAGE="https://github.com/graygnuorg/pound"
-#SRC_URI="https://github.com/graygnuorg/${PN}/releases/download/v${PV}/${P}.tar.gz"
+#MY_P="${P/p/P}"
 
-LICENSE="GPL-3"
+DESCRIPTION="An HTTP/HTTPS reverse-proxy and load-balancer"
+HOMEPAGE="https://www.apsis.ch/pound.html"
+#SRC_URI="https://www.apsis.ch/pound/${MY_P}.tgz"
+
+LICENSE="BSD GPL-3"
 SLOT="0"
 KEYWORDS="amd64 ~hppa ~ppc x86"
 
 RDEPEND="
 	|| ( app-containers/podman app-containers/docker )
 	app-containers/container-init-scripts
-	!www-servers/pound
-"
+	!www-servers/pound"
 
 S="${WORKDIR}"
 
