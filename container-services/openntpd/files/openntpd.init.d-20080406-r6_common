@@ -2,7 +2,18 @@
 # Copyright 1999-2013 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
-podman_memory_size='pico'
+pagesize="$( getconf PAGE_SIZE 2>/dev/null )" || :
+case "${pagesize:-"4096"}" in
+	65536)
+		# Kernel page-size of 64k...
+		podman_memory_size='nano'
+		;;
+	*)
+		# ...kernel page-size of 16k or less
+		podman_memory_size='pico'
+		;;
+esac
+unset pagesize
 
 # N.B. ${RC_SVCNAME} == 'ntpd', so we don't want to use this
 PN='openntpd'
