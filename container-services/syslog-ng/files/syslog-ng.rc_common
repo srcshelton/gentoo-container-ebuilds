@@ -13,7 +13,18 @@
 : ${SYSLOG_NG_GROUP:=root}
 : ${SYSLOG_NG_USER:=root}
 
-podman_memory_size='nano'
+pagesize="$( getconf PAGE_SIZE 2>/dev/null )" || :
+case "${pagesize:-"4096"}" in
+	65536)
+		# Kernel page-size of 64k...
+		podman_memory_size='micro'
+		;;
+	*)
+		# ...kernel page-size of 16k or less
+		podman_memory_size='nano'
+		;;
+esac
+unset pagesize
 
 PN="${RC_SVCNAME:=syslog-ng}" # PN='syslog-ng'
 PV='@PVR@'
