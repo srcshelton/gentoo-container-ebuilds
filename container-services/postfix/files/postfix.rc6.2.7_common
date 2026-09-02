@@ -16,6 +16,16 @@ else
 	CONF_MESSAGE="(${CONF_DIR})"
 fi
 
+: ${DOVECOT_CONF:=/etc/dovecot/dovecot.conf}
+DOVECOT_BASEDIR="$(
+	cat "${DOVECOT_CONF}" |
+	sed 's/#.*$//' |
+	grep 'base_dir\s*=' |
+	cut -d'=' -f 2- |
+	sed 's/^[[:space:]]\+// ; s/[[:space:]]\+$//'
+)"
+DOVECOT_BASEDIR=${DOVECOT_BASEDIR:-/var/run/dovecot}
+
 podman_memory_size='tiny'
 
 PN='postfix' # PN="${RC_SVCNAME:=postfix}"
@@ -62,6 +72,8 @@ dockermounts=(
 	${dockermount_etc}
 	--mount type=bind,source=/etc/dovecot/,destination=/etc/dovecot/
 	--mount type=bind,source=/etc/mail/,destination=/etc/mail/
+	#--mount type=bind,source=/etc/opendkim/,destination=/etc/opendkim/,ro=true  # See separate opendkim service
+	#--mount type=bind,source=/etc/opendmarc/,destination=/etc/opendmarc/,ro=true  # See separate opendmarc service
 	${dockermount_ssl}
 	--mount type=bind,source=/etc/sasl2/,destination=/etc/sasl2/,ro=true
 
@@ -170,8 +182,54 @@ checkconfig() {
 			"localhost/${dockerimage}" ${CONF_PARAM} check || rc=${?}
 	fi
 	} 2>&1 |
-	grep --line-buffered --invert-match --fixed-strings ': warning: '
+		grep --line-buffered --invert-match --fixed-strings \
+			': warning: '
+
 	eend ${rc} "Configuration error. Please fix your configfile."
+
+	if [ $(( rc )) -eq 0 ]; then
+		# Also check embedded dovecot configuration - copied from
+		# /etc/init.d/dovecot...
+		
+		ebegin "Checking embedded 'dovecot' configuration"
+
+		set -o pipefail
+
+		if service_started; then
+			DOVECOT_BASEDIR="$(
+				docker exec "${container_name}" \
+					dovecot -c ${DOVECOT_CONF} config -h base_dir |
+				tr -d '[:cntrl:]'
+			)"
+		else
+			DOVECOT_BASEDIR="$(
+				docker --log-level=info run \
+						${dockeropts[@]} "${dockermounts[@]}" \
+						--name "${container_name}-getconfig" \
+						--replace \
+						--restart no \
+						--rm \
+					${dockerimage} \
+						-c ${DOVECOT_CONF} config -h base_dir |
+				tr -d '[:cntrl:]'
+			)"
+		fi
+		rc=${?}
+
+		if [ $(( rc )) -ne 0 ] || [ -z "${DOVECOT_BASEDIR:-}" ]; then
+			if [ $(( rc )) -eq 0 ]; then
+				rc=1
+			fi
+
+			eend ${rc} "Error parsing ${DOVECOT_CONF}"
+		elif ! [ -d "${DOVECOT_BASEDIR:-}" ]; then
+			rc=1
+
+			eend ${rc} "dovecot base_dir '${DOVECOT_BASEDIR:-}' does not exist"
+		fi
+	fi
+
+	return ${rc}
 }
 
 inspect() {
