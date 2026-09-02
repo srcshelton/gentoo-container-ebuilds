@@ -1,5 +1,5 @@
 #!/sbin/openrc-run
-# Copyright 1999-2019 Gentoo Authors
+# Copyright 1999-2024 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 : ${MY_CNF:=/etc/${RC_SVCNAME}/my.cnf}
@@ -208,7 +208,7 @@ start_pre() {
 	local git='' dir='/etc/mysql'
 
 	# Check for old conf.d variables that mean migration was not yet done.
-	set | egrep -sq '^(mysql_slot_|MYSQL_BLOG_PID_FILE|STOPTIMEOUT)'
+	set | grep -Esq '^(mysql_slot_|MYSQL_BLOG_PID_FILE|STOPTIMEOUT)'
 	rc=$?
 	# Yes, MYSQL_INIT_I_KNOW_WHAT_I_AM_DOING is a hidden variable.
 	# It does have a use in testing, as it is possible to build a config
@@ -239,6 +239,7 @@ start_pre() {
 	# config or MY_ARGS
 	[ "${wsrep}" = "1" ] && wsrep="on"
 	if [ "${wsrep}" != "on" ] || [ -n "${wsrep_new}" ] || stringContain 'wsrep-new-cluster' "${MY_ARGS}" ; then
+
 		local datadir=$(get_config "${MY_CNF}" datadir | tail -n1)
 		if [ ! -d "${datadir}" ] ; then
 			eerror "MySQL datadir '${datadir}' is empty or invalid"
