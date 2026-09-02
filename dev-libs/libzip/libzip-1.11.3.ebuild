@@ -39,7 +39,7 @@ BDEPEND="
 "
 
 PATCHES=(
-	"${FILESDIR}"/${P}-uninit.patch
+	"${FILESDIR}/${P}-uninit.patch"
 )
 
 pkg_setup() {
