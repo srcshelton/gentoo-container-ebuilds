@@ -86,6 +86,7 @@ depend() {
 		_containers_depend
 	use logger
 	provide dns
+	after ntp-client sshd
 }
 
 _checkpaths() {
