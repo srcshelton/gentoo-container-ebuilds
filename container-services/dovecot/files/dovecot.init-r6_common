@@ -4,8 +4,6 @@
 
 : ${DOVECOT_CONFDIR:=/etc/dovecot}
 : ${DOVECOT_CONF:=${DOVECOT_CONFDIR}/dovecot.conf}
-: ${DOVECOT_BASEDIR:=/var/run/dovecot}
-: ${DOVECOT_PIDFILE:=${DOVECOT_BASEDIR}/master.pid}
 
 DOVECOT_INSTANCE=${RC_SVCNAME##*.}
 if [ -n "${DOVECOT_INSTANCE:-}" ] && [ "${RC_SVCNAME}" != "dovecot" ]; then
@@ -21,7 +19,7 @@ DOVECOT_BASEDIR="$(
 DOVECOT_BASEDIR=${DOVECOT_BASEDIR:-/var/run/dovecot}
 DOVECOT_PIDFILE=${DOVECOT_BASEDIR}/master.pid
 
-podman_memory_size='micro'
+podman_memory_size='small'
 
 PN="${RC_SVCNAME:=dovecot}" # PN='dovecot'
 PV='@PVR@'
@@ -91,20 +89,24 @@ required_dirs="${DOVECOT_CONFDIR}"
 
 
 depend() {
+	[[ "$( type -t _containers_depend )" == 'function' ]] &&
+		_containers_depend
 	after bootmisc ldap mysql ntp-client ntpd postgresql saslauthd slapd
-	need containers
 	use logger
 	before postfix
 }
 
 checkconfig() {
+	local -i rc=0
+
+	_containers_check_paths || return ${?}
+
 	ebegin "Checking dovecot configuration"
 
 	if service_started; then
 		DOVECOT_BASEDIR="$(
 			docker exec "${container_name}" \
-				dovecot -c ${DOVECOT_CONF} config -h base_dir 2>/dev/null |
-			tr -d '[:cntrl:]'
+				dovecot -c ${DOVECOT_CONF} config -h base_dir
 		)"
 	else
 		DOVECOT_BASEDIR="$(
@@ -115,20 +117,24 @@ checkconfig() {
 					--restart no \
 					--rm \
 				${dockerimage} \
-					-c ${DOVECOT_CONF} config -h base_dir 2>/dev/null |
-			tr -d '[:cntrl:]'
+					-c ${DOVECOT_CONF} config -h base_dir
 		)"
 	fi
+	rc=${?}
 
-	if [ $(( $? )) -ne 0 ]; then
-		eerror "Error parsing ${DOVECOT_CONF}"
-		return 1
-	fi
-	if ! [ -d "${DOVECOT_BASEDIR:-}" ]; then
-		ewarn "dovecot base_dir '${DOVECOT_BASEDIR:-}' does not exist"
+	if [ $(( rc )) -ne 0 ] || [ -z "${DOVECOT_BASEDIR:-}" ]; then
+		if [ $(( rc )) -eq 0 ]; then
+			rc=1
+		fi
+
+		eend ${rc} "Error parsing ${DOVECOT_CONF}"
+	elif ! [ -d "${DOVECOT_BASEDIR:-}" ]; then
+		rc=1
+
+		eend ${rc} "dovecot base_dir '${DOVECOT_BASEDIR:-}' does not exist"
 	fi
 
-	eend 0
+	return ${rc}
 }
 
 inspect() {
@@ -139,6 +145,7 @@ start_pre() {
 	container_dir_etc="${DOVECOT_CONFDIR}"
 	container_use_git="${DOVECOT_USE_GIT:-}"
 
+	_containers_check_paths || return ${?}
 	_containers_start_pre
 }
 

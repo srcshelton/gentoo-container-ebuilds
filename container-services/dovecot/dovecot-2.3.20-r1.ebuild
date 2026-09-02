@@ -35,7 +35,7 @@ KEYWORDS="~alpha amd64 arm ~arm64 ~hppa ~ia64 ~mips ppc ~ppc64 ~riscv ~s390 ~spa
 #IUSE_DOVECOT_OTHER="argon2 caps doc lucene managesieve rpc
 
 #IUSE="argon2 caps doc kerberos ldap lua lucene lz4 managesieve mysql pam postgres rpc selinux sieve solr sqlite static-libs stemmer suid systemd tcpd textcat unwind zstd"
-IUSE="ipv6 ldap managesieve mysql pam postgres sieve"
+IUSE="ldap managesieve mysql pam postgres sieve"
 
 RDEPEND="
 	${DEPEND}
@@ -44,7 +44,8 @@ RDEPEND="
 	acct-user/dovecot
 	acct-user/dovenull
 	net-mail/mailbase[pam?]
-	"
+	!net-mail/dovecot
+"
 
 S="${WORKDIR}/${MY_P}"
 

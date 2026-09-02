@@ -44,7 +44,9 @@ RDEPEND="
 	acct-group/dovenull
 	acct-group/mail
 	acct-user/dovecot
-	acct-user/dovenull"
+	acct-user/dovenull
+	!net-mail/dovecot
+"
 
 S="${WORKDIR}"
 

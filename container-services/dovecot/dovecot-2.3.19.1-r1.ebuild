@@ -46,7 +46,7 @@ RDEPEND="
 	acct-user/dovecot
 	acct-user/dovenull
 	!net-mail/dovecot
-	"
+"
 
 S="${WORKDIR}/${MY_P}"
 
