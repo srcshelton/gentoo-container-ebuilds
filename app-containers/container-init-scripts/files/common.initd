@@ -13,17 +13,25 @@
 
 # We can't do this without arrays, so we need bash...
 #shellcheck shell=bash
+#shellcheck disable=SC3043  # Allow 'local', even for POSIX sh
+#
+# add_opt works perfectly well without mapfile or read -a...
+#shellcheck disable=SC2207
 
-set -o pipefail >/dev/null 2>&1 || :
+# Are we really POSIX sh?  If not, this might still work...
+if set -o | grep -q -- 'pipefail'; then
+    # shellcheck disable=SC3040
+    set -o pipefail
+fi
 
 add_opt() {
 	local key="${1:-}"
 	local value="${2:-}"
 
-	if [[ -n "${key:-}" && -n "${value:-}" ]]; then
+	if [ -n "${key:-}" ] && [ -n "${value:-}" ]; then
 		echo "${key} ${value}"
 	fi
-} # add_opt
+}  # add_opt
 
 # This script will be evaluated as soon as openrc is first invoked, before
 # the 'localmount' service has run, and so neither 'docker' nor 'podman' will
@@ -31,93 +39,115 @@ add_opt() {
 #
 # Update: We also need 'command' for logging purposes, so need to evaluate
 #         this early.
-if [[ -d /usr/bin ]]; then
+if [ -d /usr/bin ]; then
 	command='docker'
 	if type -pf podman >/dev/null; then
 		command='podman'
 		docker() {
 			test "${1:-}" = 'rm' && trap '' INT ;
-			podman ${@+"${@}"} ;
+			if [ -n "${PODMAN_CONMON_CGROUP:-}" ] &&
+					[ -n "${PODMAN_CLUSTER_CGROUP:-}" ]
+			then
+				cgexec -g "cpuset:${PODMAN_CONMON_CGROUP}" \
+					podman ${@+"${@}"} ;
+			else
+				podman ${@+"${@}"} ;
+			fi
 			trap - INT ;
-		} # docker
+		}  # docker
 		export -f docker
 	fi
 	docker --version >/dev/null || exit 127
 fi
 
+cpu_cluster='' cluster_cgroup=''
 if [ -s "${RC_PREFIX%/}/etc/conf.d/_containers_common" ]; then
-	eval "$( # <- Syntax
+	eval "$(  # <- Syntax
+			# shellcheck disable=SC1091
 			source "${RC_PREFIX%/}/etc/conf.d/_containers_common" \
 				>/dev/null 2>&1
-			set | grep '^cpu_cluster_[a-z]\+='
+			set | grep -E '^\s*(cluster_cgroup|cpu_cluster)_[a-z]+='
 		)"
 fi
 
-cpu_cluster=''
 case "${podman_memory_size:-}" in
 	# Set swap for memory sizes over 1GB to be sqrt(MEMORY_LIMIT), rounded
 	# up...
-	pico)
+	'pico')
 		# Pico
 		: "${PODMAN_MEMORY_RESERVATION:="16m"}"
 		: "${PODMAN_MEMORY_LIMIT:="32m"}"
 		#: "${PODMAN_SWAP_LIMIT:="1g"}"
 		cpu_cluster="${cpu_cluster_little:-}"
 		;;
-	nano)
+	'nano')
 		# Nano
 		: "${PODMAN_MEMORY_RESERVATION:="32m"}"
 		: "${PODMAN_MEMORY_LIMIT:="64m"}"
 		#: "${PODMAN_SWAP_LIMIT:="1g"}"
 		cpu_cluster="${cpu_cluster_little:-}"
 		;;
-	micro)
+	'submicro')
+		# Sub-micro
+		: "${PODMAN_MEMORY_RESERVATION:="64m"}"
+		: "${PODMAN_MEMORY_LIMIT:="128m"}"
+		#: "${PODMAN_SWAP_LIMIT:="1g"}"
+		cpu_cluster="${cpu_cluster_little:-}"
+		;;
+	'micro')
 		# Micro
 		: "${PODMAN_MEMORY_RESERVATION:="128m"}"
 		: "${PODMAN_MEMORY_LIMIT:="256m"}"
 		#: "${PODMAN_SWAP_LIMIT:="1g"}"
 		cpu_cluster="${cpu_cluster_little:-}"
 		;;
-	tiny)
+	'tiny')
 		# Tiny
 		: "${PODMAN_MEMORY_RESERVATION:="256m"}"
 		: "${PODMAN_MEMORY_LIMIT:="512m"}"
 		#: "${PODMAN_SWAP_LIMIT:="1g"}"
 		cpu_cluster="${cpu_cluster_little:-}"
 		;;
-	small)
+	'small')
 		# Small
 		: "${PODMAN_MEMORY_RESERVATION:="512m"}"
 		: "${PODMAN_MEMORY_LIMIT:="1g"}"
 		#: "${PODMAN_SWAP_LIMIT:="2g"}"
 		cpu_cluster="${cpu_cluster_medium:-}"
 		;;
-	medium)
+	'medium')
 		# Medium
 		: "${PODMAN_MEMORY_RESERVATION:="1g"}"
 		: "${PODMAN_MEMORY_LIMIT:="2g"}"
 		#: "${PODMAN_SWAP_LIMIT:="3g"}"
 		cpu_cluster="${cpu_cluster_medium:-}"
 		;;
-	large)
+	'large')
 		# Large
 		: "${PODMAN_MEMORY_RESERVATION:="2g"}"
 		: "${PODMAN_MEMORY_LIMIT:="4g"}"
 		#: "${PODMAN_SWAP_LIMIT:="6g"}"
 		cpu_cluster="${cpu_cluster_big:-}"
 		;;
-	xl|extra-large)
+	'xl'|'extra-large')
 		# Extra-Large
 		: "${PODMAN_MEMORY_RESERVATION:="4g"}"
 		: "${PODMAN_MEMORY_LIMIT:="8g"}"
 		#: "${PODMAN_SWAP_LIMIT:="11g"}"
 		cpu_cluster="${cpu_cluster_big:-}"
 		;;
-	xxl)
+	'xxl')
 		# Extra-Large
 		: "${PODMAN_MEMORY_RESERVATION:="8g"}"
 		: "${PODMAN_MEMORY_LIMIT:="16g"}"
 		#: "${PODMAN_SWAP_LIMIT:="20g"}"
+		cpu_cluster="${cpu_cluster_big:-}"
+		;;
+	'xxxl')
+		# Extra-Large
+		: "${PODMAN_MEMORY_RESERVATION:="12g"}"
+		: "${PODMAN_MEMORY_LIMIT:="24g"}"
+		#: "${PODMAN_SWAP_LIMIT:="29g"}"
 		cpu_cluster="${cpu_cluster_big:-}"
 		;;
 	'')
@@ -126,9 +156,33 @@ case "${podman_memory_size:-}" in
 		ewarn "Unknown memory profile '${podman_memory_size}'"
 		;;
 esac
+if [ -n "${cpu_cluster:-}" ]; then
+	case "${cpu_cluster}" in
+		"${cpu_cluster_big:+"__not_set__"}")
+			cluster_cgroup="${cluster_cgroup_big:-}"
+			;;
+		"${cpu_cluster_medium:+"__not_set__"}")
+			cluster_cgroup="${cluster_cgroup_medium:-}"
+			;;
+		"${cpu_cluster_little:+"__not_set__"}")
+			cluster_cgroup="${cluster_cgroup_little:-}"
+			;;
+	esac
+	if [ -n "${cluster_cgroup:-}" ]; then
+		cluster_cgroup="/sys/fs/cgroup/${cluster_cgroup#"/sys/fs/cgroup/"}"
+		if ! [ -d "${cluster_cgroup}" ]; then
+			eerror "cgroup '${cluster_cgroup#"/sys/fs/cgroup/"}' does not" \
+				"exist, not setting service cgroup"
+			unset cluster_cgroup
+		fi
+	fi
+fi
 : "${PODMAN_SWAP_LIMIT:="${PODMAN_MEMORY_LIMIT}"}"
 : "${PODMAN_CPU_CLUSTER:="${cpu_cluster:-}"}"
-unset cpu_cluster
+: "${PODMAN_CLUSTER_CGROUP:="${cluster_cgroup:+"/${cluster_cgroup}/libpod_parent"}"}"
+: "${PODMAN_CONMON_CGROUP:="${cluster_cgroup_conmon:+"/${cluster_cgroup_conmon}/libpod_parent"}"}"
+unset cluster_cgroup_big cluster_cgroup_medium cluster_cgroup_little
+unset cluster_cgroup_conmon cluster_cgroup cpu_cluster
 
 if [ -r /etc/containers/storage.conf ] &&
 		sed 's/#.*//' /etc/containers/storage.conf |
@@ -167,45 +221,30 @@ dockeropts+=(
 	--cap-drop ALL
 
 	$(add_opt --cpuset-cpus "${PODMAN_CPU_CLUSTER}")
-
-	$(add_opt --memory-reservation "${PODMAN_MEMORY_RESERVATION,,}")
-	$(add_opt --memory "${PODMAN_MEMORY_LIMIT,,}")
-	$(add_opt --memory-swap "${PODMAN_SWAP_LIMIT,,}")
+	$(add_opt --cgroup-parent "${PODMAN_CLUSTER_CGROUP}")
+	$( [ -n "${PODMAN_CONMON_CGROUP:-}" ] && add_opt --cgroups no-conmon )
 
 	# Prevents containers from being stopped by sending signals to podman
 	#--init
 
 	#--interactive
 	--name "${container_name}"
-	--restart on-failure
+	--restart "${PODMAN_RESTART:-"on-failure"}"
 	#--rm
-	--tty
+	#--tty
 )
-# We might not have a cgroup yet?
-if [ -s "/sys/fs/cgroup/openrc.${RC_SVCNAME}/memory.max" ]; then
-	have_memory_cgroup=1
-elif [ $(( $(
-		find /sys/fs/cgroup/ \
-				-mindepth 1 \
-				-maxdepth 2 \
-				-name 'memory.max' \
-				-print |
-			wc -l
-	) )) -gt 0 ]
+if [ -f /sys/fs/cgroup/cgroup.controllers ] &&
+		grep -Fqw 'memory' /sys/fs/cgroup/cgroup.controllers
 then
-	have_memory_cgroup=1
-fi
-if [ $(( have_memory_cgroup )) -eq 1 ]; then
 	dockeropts+=(
-		${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
-		${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
-		${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
+		$(add_opt --memory-reservation "${PODMAN_MEMORY_RESERVATION,,}")
+		$(add_opt --memory "${PODMAN_MEMORY_LIMIT,,}")
+		$(add_opt --memory-swap "${PODMAN_SWAP_LIMIT,,}")
 	)
 else
 	ewarn "Kernel appears to be lacking memory cgroup support - no" \
 		"memory limits will be applied or enforced"
 fi
-unset have_memory_cgroup
 
 dockernetwork+=(
 	# "Port mappings have been discarded as one of the Host, Container,
@@ -233,8 +272,41 @@ dockermount_defaults=(
 	"${dockermount_run}"
 )
 
-dockervolumes_hugetlb='--volume /dev/hugepages2M:/dev/hugepages'
-dockervolumes_hugetlb1gb='--volume /dev/hugepages1G:/dev/hugepages'
+dockervolumes_hugetlb='--group-add 30 --cap-add IPC_LOCK'
+if [ -e /dev/hugepages2M ]; then
+	dockervolumes_hugetlb2mb='--volume /dev/hugepages2M:/dev/hugepages'
+elif [ -e /dev/hugepages ]; then
+	dockervolumes_hugetlb2mb='--volume /dev/hugepages:/dev/hugepages'
+fi
+pagesize="$( getconf PAGE_SIZE 2>/dev/null )" || :
+case "${pagesize:-"4096"}" in
+	4096)
+		case "$( uname -m )" in
+			'aarch64')
+				dockervolumes_hugetlb64k='--volume /dev/hugepages64K:/dev/hugepages'
+				dockervolumes_hugetlb32mb='--volume /dev/hugepages32M:/dev/hugepages'
+				dockervolumes_hugetlb1gb='--volume /dev/hugepages1G:/dev/hugepages'
+				;;
+			'x86_64')
+				if grep -qwm 1 'pdpe1gb' /proc/cpuinfo; then
+					dockervolumes_hugetlb1gb='--volume /dev/hugepages1G:/dev/hugepages'
+				fi
+				;;
+			# TODO: x86 (4K, 4M, 2M w/PAE), ppc64 (4K, 16M)
+		esac
+		;;
+	# aarch64-only:
+	16384)
+		dockervolumes_hugetlb32mb='--volume /dev/hugepages32M:/dev/hugepages'
+		dockervolumes_hugetlb1gb='--volume /dev/hugepages1G:/dev/hugepages'
+		;;
+	65536)
+		dockervolumes_hugetlb512mb='--volume /dev/hugepages512M:/dev/hugepages'
+		dockervolumes_hugetlb16gb='--volume /dev/hugepages16G:/dev/hugepages'
+		;;
+esac
+unset pagesize
+dockervolumes_hugetlb="${dockervolumes_hugetlb} ${dockervolumes_hugetlb2mb:-}"
 
 dockervolumes+=(
 	--volume "/srv/${PN}"
@@ -259,7 +331,7 @@ container_dir_lib="${container_dir_lib:-}"
 container_svc_pid="${container_svc_pid-${container_dir_run-/var/run/${PN}}/${RC_SVCNAME}.pid}"
 
 container_log_prefix='container'
-if [[ -n "${command:-}" ]]; then
+if [ -n "${command:-}" ]; then
 	container_log_prefix="${command%% *}"
 fi
 
@@ -277,27 +349,30 @@ container_stop_timeout=31
 retry="TERM/$(( container_stop_timeout + 1 ))/KILL/2"
 
 name="containerised ${RC_SVCNAME}"
+extra_started_commands="${extra_started_commands:+"${extra_started_commands} "}memory_pressure"
 #description=''
-#description_healthcheck=''
-#description_unhealthy=''
 #description_cgroup_cleanup='Kill all processes in the cgroup'
+#description_healthcheck=''
+description_memory_pressure="Trigger service-specific reaction to memory pressure"
+#description_unhealthy=''
 }
 
 _containers_depend() {
 	need containers
 	use podman docker
-} # containers_depend
+}  # containers_depend
 export -f _containers_depend
 
 _containers_set_args() {
 	# Allow substitutions on $command_opts
-	#shellcheck disable=SC2206
+	#shellcheck disable=SC2154,SC2206
 	command_docker_args=(
 		${dockeropts[@]:-}
 		$(add_opt --entrypoint "${container_entrypoint}")
 		${dockermounts[@]:-}
 		${dockervolumes[@]:-}
 	)
+	# shellcheck disable=SC2206
 	command_docker_net_args=(
 		${dockernetwork[@]:-}
 		${dockerports[@]:-}
@@ -319,7 +394,7 @@ _containers_set_args() {
 		--systemd false
 	)
 	#shellcheck disable=SC2034,SC2116,SC2154
-	command_args="run $( # <- Syntax
+	command_args="run $(  # <- Syntax
 		echo "${command_docker_args[*]:-}" \
 			"${command_docker_net_args[*]:-}" \
 			"${command_docker_pid_args[*]:-}" \
@@ -329,7 +404,7 @@ _containers_set_args() {
 	)"
 
 	return 0
-} # _containers_set_args
+}  # _containers_set_args
 
 _containers_check_paths() {
 	set -u
@@ -347,7 +422,7 @@ _containers_check_paths() {
 					--owner "${container_dir_run_owner}:${container_dir_run_group}" \
 					--quiet \
 				"${container_dir_run}" || return ${?}
-		else # inactive stopping stopped coldplugged wasinactive
+		else  # inactive stopping stopped coldplugged wasinactive
 			checkpath --directory-truncate \
 					--mode "${container_dir_run_mode}" \
 					--owner "${container_dir_run_owner}:${container_dir_run_group}" \
@@ -373,13 +448,14 @@ _containers_check_paths() {
 	set +u
 
 	return 0
-} # _containers_check_paths
+}  # _containers_check_paths
 
 _containers_inspect() {
 	local id='' filter=''
+	local -i rc=0
 
 	filter="name=${container_name_root:-"${container_name}"}-inspect"
-	id="$( # <- Syntax
+	id="$(  # <- Syntax
 		docker ps -a \
 			--filter "${filter}" \
 			--format '{{.ID}}' 2>/dev/null
@@ -391,7 +467,14 @@ _containers_inspect() {
 		ewarn "Not removing any previous container"
 	fi
 
-	einfo "Launching image 'localhost/${dockerimage}' as '${container_name_root:-"${container_name}"}-inspect' ..."
+	if ! docker image inspect "localhost/${dockerimage}"; then
+		eerror "Cannot locate image 'localhost/${dockerimage}': ${?}"
+		return 1
+	fi
+
+	einfo "Launching image 'localhost/${dockerimage}' as '${container_name_root:-"${container_name}"}-inspect' with arguments '${command_docker_daemon_args[*]/--replace}' ..."
+	set -x
+	# shellcheck disable=SC2068
 	docker --log-level=info run "${command_docker_args[@]:-}" \
 			${command_docker_daemon_args[@]/--replace} \
 			--entrypoint=/bin/sh \
@@ -402,9 +485,11 @@ _containers_inspect() {
 			--restart no \
 			--rm \
 		"localhost/${dockerimage}"
+	: $(( rc = ${?} ))
+	set +x
 
-	veinfo "exit(${?})"
-} # _containers_inspect
+	veinfo "exit(${rc})"
+}  # _containers_inspect
 
 _containers_git_commit_changes() {
 	local container_dir_etc="${container_dir_etc-/etc/${PN}}"
@@ -437,7 +522,7 @@ _containers_git_commit_changes() {
 			git commit -m "Record changes on ${RC_SVCNAME} start" >/dev/null 2>&1
 		popd >/dev/null 2>&1 || :
 	fi
-} # _containers_git_commit_changes
+}  # _containers_git_commit_changes
 
 _containers_start_pre() {
 	local id=''
@@ -471,7 +556,7 @@ _containers_start_pre() {
 	set +u
 
 	return 0
-} # _containers_start_pre
+}  # _containers_start_pre
 
 _containers_start_post() {
 	local container_svc_wait="${container_svc_wait-5}"
@@ -558,19 +643,19 @@ _containers_start_post() {
 	set +u
 
 	return 0
-} # _containers_start_post
+}  # _containers_start_post
 
 _containers_format_memory() {
 	local selector="${1:-}"
 	local file="${2:-}"
 
-	[[ -n "${selector:-}" && -n "${file:-}" ]] || return 1
+	[ -n "${selector:-}" ] && [ -n "${file:-}" ] || return 1
 	# We can't use 'test -s' on status files, which all report size==0...
-	[[ -f "${file}" && -r "${file}" ]] || return 2
+	[ -f "${file}" ] && [ -r "${file}" ] || return 2
 
 	grep -F "${selector}" "${file}" |
 		awk '( "kB" == $3 ) { $2 /= 1024 ; printf "%.2fMB\n", $2 }'
-} # _containers_format_memory
+}  # _containers_format_memory
 
 _containers_status() {
 	local output='einfo' entry='' file=''
@@ -587,7 +672,7 @@ _containers_status() {
 	else
 		status_host_pid="$( cat "${pidfile}" 2>/dev/null )" ||
 			eerror "Unable to read host PID '${pidfile}': ${?}"
-		status_container_pid="$( # <- Syntax
+		status_container_pid="$(  # <- Syntax
 			cat "${container_svc_pid:-}" 2>/dev/null |
 				awk '{ print $1 }'
 		)" ||
@@ -602,22 +687,26 @@ _containers_status() {
 		$output "${RC_SVCNAME}:" \
 			"podman PID '${status_host_pid:-"unknown"}'," \
 			"host PID '${status_container_pid:-"unknown"}'"
+		if [ -n "${podman_memory_size:-}" ]; then
+			$output "${RC_SVCNAME//?/ }  Container memory" \
+				"template '${podman_memory_size}'${PODMAN_CLUSTER_CGROUP:+", cgroup '${PODMAN_CLUSTER_CGROUP}'"}${PODMAN_CPU_CLUSTER:+", CPU cores '${PODMAN_CPU_CLUSTER}'"}"
+		fi
 		if (( status_container_pid > 300 )); then
-			if ! [[ -d "/proc/${status_container_pid}" ]]; then
+			if ! [ -d "/proc/${status_container_pid}" ]; then
 				eerror "Cannot locate PID directory" \
 					"'/proc/${status_container_pid}'"
-			elif ! [[ -r "/proc/${status_container_pid}/status" ]]; then
+			elif ! [ -r "/proc/${status_container_pid}/status" ]; then
 				eerror "Cannot read PID status from" \
 					"'/proc/${status_container_pid}/status'"
 			else
 				file="/proc/${status_container_pid}/status"
-				$output "${RC_SVCNAME//?/ }  Peak memory usage $( # <- Syntax
+				$output "${RC_SVCNAME//?/ }  Peak memory usage $(  # <- Syntax
 					_containers_format_memory 'VmPeak' \
 						"${file}"
-				), Peak resident-set size $( # <- Syntax
+				), Peak resident-set size $(  # <- Syntax
 					_containers_format_memory 'VmHWM' \
 						"${file}"
-				), Swap usage $( # <- Syntax
+				), Swap usage $(  # <- Syntax
 					_containers_format_memory 'VmSwap' \
 						"${file}"
 				)"
@@ -661,9 +750,9 @@ _containers_status() {
 	if [ -z "${entry:-}" ]; then
 		eerror "podman has no data on container '${container_name}'"
 	else
-		local id image status created running exited mounts labels state other # size
+		local id image status created running exited mounts labels state other  # size
 		local -i starttime=0 stoptime=0 exitcode=0 factor=1 ticks=0 peak=0
-		while IFS='!' read -r id image status created running exited starttime stoptime mounts labels state exitcode other; do # size
+		while IFS='!' read -r id image status created running exited starttime stoptime mounts labels state exitcode other; do  # size
 			#local field=''
 			#for field in id image status created running exited starttime stoptime mounts labels state exitcode other; do
 			#	veinfo "DEBUG: ${field:-}=${!field:-}"
@@ -689,23 +778,26 @@ _containers_status() {
 				output='eerror'
 			fi
 
-			if [ -r /sys/fs/cgroup/libpod_parent/libpod-${id}*/memory.peak ]; then
-				peak="$( cat "$( readlink -e /sys/fs/cgroup/libpod_parent/libpod-${id}*/memory.peak )" )"
-				if (( peak )); then
-					if (( peak < 1024 )); then
-						$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} B"
-					elif (( peak < 1048576 )); then
-						(( peak = ( peak + 1 ) / 1024 ))
-						$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} KiB"
-					elif (( peak < 1073741824 )); then
-						(( peak = ( peak + 1024 ) / 1048576 ))
-						$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} MiB"
-					else
-						(( peak = ( peak + 1048576 ) / 1073741824 ))
-						$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} GiB"
+			# This loop should only execute once...
+			for cg in "/sys/fs/cgroup${PODMAN_CLUSTER_CGROUP:-"/libpod_parent"}/libpod-${id}"*/memory.peak; do
+				if [ -r "${cg:-}" ]; then
+					peak="$( cat "$( readlink -e "${cg}" )" )"
+					if (( peak )); then
+						if (( peak < 1024 )); then
+							$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} B"
+						elif (( peak < 1048576 )); then
+							(( peak = ( peak + 1 ) / 1024 ))
+							$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} KiB"
+						elif (( peak < 1073741824 )); then
+							(( peak = ( peak + 1024 ) / 1048576 ))
+							$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} MiB"
+						else
+							(( peak = ( peak + 1048576 ) / 1073741824 ))
+							$output "${RC_SVCNAME//?/ }  Maximum cgroup memory usage: ${peak} GiB"
+						fi
 					fi
 				fi
-			fi
+			done
 
 			$output ''
 
@@ -730,7 +822,7 @@ _containers_status() {
 				fi
 
 				$output "Image:  ${image:-"-"}," \
-					"ID: ${id:-"-"}:" \
+					"ID: ${id:-"-"};" \
 					"(${status:-"Unknown"}:" \
 					"${exitcode})${created:+" created ${created}"}${running:+" (${running,,} ago)"}," \
 					"${exittime:+"ran for ${exittime}"} -" \
@@ -742,7 +834,7 @@ _containers_status() {
 				fi
 
 				$output "Image:  ${image:-"-"}," \
-					"ID: ${id:-"-"}:" \
+					"ID: ${id:-"-"};" \
 					"(${status:-"Unknown"})${created:+" created ${created}"}${running:+" ${state:-"running"} for ${running,,}"}"
 			fi
 
@@ -789,6 +881,14 @@ _containers_status() {
 				local -i first=1
 				$output ''
 				echo "${mounts}" | xargs -n 1 echo | sort -V | while read -r mount; do
+					if [ -z "${mount:-}" ] ||
+						[ "${mount}" = "/srv/${RC_SVCNAME}" ]
+					then
+						# Exclude specific non-bind
+						# volume mount used to extract
+						# info/man pages, etc.
+						continue
+					fi
 					if (( first )); then
 						first=0
 						$output "Mounts: ${mount}"
@@ -803,7 +903,7 @@ _containers_status() {
 	fi
 
 	return ${container_status}
-} # _containers_status
+}  # _containers_status
 
 _containers_reload() {
 	local container_svc_wait="${container_svc_wait-5}"
@@ -847,7 +947,7 @@ _containers_reload() {
 	if [ $(( pid )) -gt 300 ]; then
 		kill -HUP "${pid}"
 	else
-		: $(( pid = $( # <- Syntax
+		: $(( pid = $(  # <- Syntax
 			docker inspect \
 					--format '{{.State.Pid}}' \
 				"${container_name}" 2>/dev/null || echo '0'
@@ -870,20 +970,20 @@ _containers_reload() {
 
 	pid=0
 
-	while [ ! -e "${pid_file}" ] || [ $(( oldpid )) -eq "$( # <- Syntax
+	while [ ! -e "${pid_file}" ] || [ $(( oldpid )) -eq "$(  # <- Syntax
 		awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
 	)" ] && [ $(( count )) -lt $(( wait )) ]; do
 		sleep ${sleep}
 		: $(( count = count + 1 ))
 	done 2>/dev/null
 
-	if [ ! -e "${pid_file}" ] || [ $(( oldpid )) -eq "$( # <- Syntax
+	if [ ! -e "${pid_file}" ] || [ $(( oldpid )) -eq "$(  # <- Syntax
 		awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
 	)" ]; then
 		eerror "Timed-out waiting for reloaded '${RC_SVCNAME}' PID in file '${pid_file}'"
 	else
 		veinfo "Service '${RC_SVCNAME}' changed from host PID" \
-			"'${oldpid}' to container PID $( # <- Syntax
+			"'${oldpid}' to container PID $(  # <- Syntax
 				awk '{ print $1 }' < "${pid_file}" 2>/dev/null || echo '0'
 			)"
 		have_pid=1
@@ -911,7 +1011,7 @@ _containers_reload() {
 					"'${pid}' to '${pid_file}' ..."
 				echo "${pid}" > "${pid_file}"
 			else
-				: $(( oldpid = $( # <- Syntax
+				: $(( oldpid = $(  # <- Syntax
 					awk '{ print $1 }' < "${pid_file}" ||
 					echo '0'
 				) + 0 ))
@@ -928,7 +1028,7 @@ _containers_reload() {
 	set +u
 
 	return 0
-} # _containers_reload
+}  # _containers_reload
 
 _containers_stop_post() {
 	local id=''
@@ -936,7 +1036,7 @@ _containers_stop_post() {
 
 	set -u
 
-	id="$( # <- Syntax
+	id="$(  # <- Syntax
 		docker ps \
 				--filter "name=${container_name}" \
 				--format '{{.ID}}' \
@@ -950,7 +1050,7 @@ _containers_stop_post() {
 	fi
 
 	if [ "${RC_CMD:-}" = 'restart' ] || [ "${RC_RUNLEVEL:-}" = 'shutdown' ]; then
-		id="$( # <- Syntax
+		id="$(  # <- Syntax
 			docker ps \
 					--all \
 					--filter "name=${container_name}" \
@@ -985,26 +1085,191 @@ _containers_stop_post() {
 	set +u
 
 	return 0
-} # _containers_stop_post
+}  # _containers_stop_post
 
 start_pre() {
 	_containers_check_paths || return ${?}
 
 	_containers_start_pre
-} # start_pre
+}  # start_pre
 
 start_post() {
 	_containers_start_post
-} # start_post
+}  # start_post
 
 status() {
 	_containers_status
-} # status
+}  # status
 
 stop_post() {
 	_containers_stop_post
-} # stop_post
+}  # stop_post
+
+_containers_check_memory_pressure() {
+        local -r state="/var/run/containers/memory-pressure/${RC_SVCNAME}.env"
+
+        [ -f "${state}" ] || return 0
+        [ -s "${state}" ] || return 0
+
+	local level="${1:-}"
+	local -i count=0 max=0 result=0
+	local key='' value=''
+
+	(( count = ${2:-0} ))
+	(( max = ${3:-10} ))
+
+        local MEMORY_PRESSURE_LEVEL=''
+        local MEMORY_PRESSURE_REASON=''
+        local -i MEMORY_PRESSURE_COUNT=0
+        local -i MEMORY_PRESSURE_WORKING_PCT=0
+        local -i MEMORY_PRESSURE_CURRENT_PCT=0
+        local -i MEMORY_PRESSURE_WORKING_BYTES=0
+        local -i MEMORY_PRESSURE_CURRENT_BYTES=0
+        local -i MEMORY_PRESSURE_LIMIT_BYTES=0
+        local -i MEMORY_PRESSURE_HEADROOM_BYTES=0
+        local -i MEMORY_PRESSURE_FLOOR_BYTES=0
+        local -i MEMORY_PRESSURE_PEAK_BYTES=0
+        local -i MEMORY_PRESSURE_CONTAINER_PID=0
+
+	# shellcheck disable=SC2034
+        while IFS='=' read -r key value; do  # () {
+                case "${key}" in
+                'MEMORY_PRESSURE_LEVEL')
+                        case "${value}" in
+				notice|warning|critical)
+					MEMORY_PRESSURE_LEVEL="${value}"
+					;;
+                        esac
+                        ;;
+
+                'MEMORY_PRESSURE_REASON')
+                        case "${value}" in
+				percent|headroom|percent+headroom)
+					MEMORY_PRESSURE_REASON="${value}"
+					;;
+                        esac
+                        ;;
+
+                'MEMORY_PRESSURE_COUNT')
+                        case "${value}" in
+				''|*[!0-9]*)
+					: ;;
+				*)
+					MEMORY_PRESSURE_COUNT="${value}"
+					;;
+                        esac
+                        ;;
+
+                MEMORY_PRESSURE_WORKING_PCT|MEMORY_PRESSURE_CURRENT_PCT|\
+                MEMORY_PRESSURE_WORKING_BYTES|MEMORY_PRESSURE_CURRENT_BYTES|\
+                MEMORY_PRESSURE_LIMIT_BYTES|MEMORY_PRESSURE_HEADROOM_BYTES|\
+                MEMORY_PRESSURE_FLOOR_BYTES|MEMORY_PRESSURE_PEAK_BYTES|\
+                MEMORY_PRESSURE_CONTAINER_PID)
+                        case "${value}" in
+				''|*[!0-9]*)
+					continue
+					;;
+                        esac
+
+                        case "${key}" in
+				'MEMORY_PRESSURE_WORKING_PCT')
+					MEMORY_PRESSURE_WORKING_PCT="${value}"
+					;;
+				'MEMORY_PRESSURE_CURRENT_PCT')
+					MEMORY_PRESSURE_CURRENT_PCT="${value}"
+					;;
+				'MEMORY_PRESSURE_WORKING_BYTES')
+					MEMORY_PRESSURE_WORKING_BYTES="${value}"
+					;;
+				'MEMORY_PRESSURE_CURRENT_BYTES')
+					MEMORY_PRESSURE_CURRENT_BYTES="${value}"
+					;;
+				'MEMORY_PRESSURE_LIMIT_BYTES')
+					MEMORY_PRESSURE_LIMIT_BYTES="${value}"
+					;;
+				'MEMORY_PRESSURE_HEADROOM_BYTES')
+					MEMORY_PRESSURE_HEADROOM_BYTES="${value}"
+					;;
+				'MEMORY_PRESSURE_FLOOR_BYTES')
+					MEMORY_PRESSURE_FLOOR_BYTES="${value}"
+					;;
+				'MEMORY_PRESSURE_PEAK_BYTES')
+					MEMORY_PRESSURE_PEAK_BYTES="${value}"
+					;;
+				'MEMORY_PRESSURE_CONTAINER_PID')
+					MEMORY_PRESSURE_CONTAINER_PID="${value}"
+					;;
+                        esac
+                        ;;
+                esac
+        done < "${state}"  # }  # #
+
+	einfo "Memory pressure stats:"
+	eindent
+	for key in $( set | grep '^MEMORY_PRESSURE_' ); do
+		key="${key%%"="*}"
+		einfo "${key}: ${!key}"
+	done
+	eoutdent
+
+	case "${level}" in
+		'notice')
+			if [ -n "${MEMORY_PRESSURE_LEVEL:-}" ]; then
+				result=1
+			fi
+			;;
+		'warning')
+			if [ "${MEMORY_PRESSURE_LEVEL:-}" = 'warning' ] ||
+				[ "${MEMORY_PRESSURE_LEVEL:-}" = 'critical' ]
+			then
+				result=1
+			fi
+			;;
+		'critical')
+			if [ "${MEMORY_PRESSURE_LEVEL:-}" = 'critical' ]
+			then
+				result=1
+			fi
+			;;
+	esac
+
+	if (( result )); then
+		if (( MEMORY_PRESSURE_COUNT > count )); then
+			return ${MEMORY_PRESSURE_COUNT:-1}
+		fi
+	elif (( MEMORY_PRESSURE_COUNT > max )); then
+		return ${MEMORY_PRESSURE_COUNT:-1}
+	fi
+
+	return 0
+}  # _containers_check_memory_pressure
+
+_containers_memory_pressure() {
+	local minimum_level="${1:-"critical"}"
+	local -i minimum_times=0
+	local -i maximum_times=0
+	local -i samples=0
+
+	(( minimum_times = ${2:-3} ))
+	(( maximum_times = ${3:-10} ))
+
+	if _containers_check_memory_pressure \
+			"${minimum_level}" ${minimum_times} ${maximum_times}
+	then
+		return 0
+	else
+		samples=${?}
+	fi
+
+	ewarn "memory pressure seen ${samples} samples in a row"
+
+	rc-service "${RC_SVCNAME}" restart
+}  # _containers_memory_pressure
+
+memory_pressure() {
+	_containers_memory_pressure
+}  # memory_pressure
 
 _containers_set_args
 
-# vi: set colorcolumn=80 filetype=gentoo-init-d foldmarker=()\ {,}\ #\  foldmethod=marker:
+# vi: set colorcolumn=80 filetype=gentoo-init-d foldmarker=()\ {,}\ \ #\  foldmethod=marker:
